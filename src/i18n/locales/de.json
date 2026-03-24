@@ -72,7 +72,9 @@
     "allGood": "Alles im grünen Bereich!",
     "openedPackagesTitle": "Geöffnete Packungen ({{count}})",
     "noOpenedPackages": "Keine offenen Packungen.",
-    "errorLoadingDashboard": "Fehler beim Laden des Dashboards"
+    "errorLoadingDashboard": "Fehler beim Laden des Dashboards",
+    "inspiration": "Inspiration",
+    "viewRecipe": "Rezept ansehen"
   },
   "inventory": {
     "title": "Mein Vorrat",

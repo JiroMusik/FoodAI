@@ -72,7 +72,9 @@
     "allGood": "Everything looks good!",
     "openedPackagesTitle": "Opened packages ({{count}})",
     "noOpenedPackages": "No opened packages.",
-    "errorLoadingDashboard": "Error loading dashboard"
+    "errorLoadingDashboard": "Error loading dashboard",
+    "inspiration": "Inspiration",
+    "viewRecipe": "View recipe"
   },
   "inventory": {
     "title": "My Inventory",

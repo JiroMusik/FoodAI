@@ -9,6 +9,7 @@ import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'path';
 import fs from 'fs';
+import Parser from 'rss-parser';
 
 const app = express();
 const PORT = 3000;
@@ -1633,6 +1634,79 @@ app.post('/api/bring/add', async (req, res) => {
   } catch (error) {
     console.error('Bring API error:', error);
     res.status(500).json({ error: 'Failed to add to Bring list' });
+  }
+});
+
+// --- Food Inspiration RSS Feed ---
+const rssParser = new Parser({
+  customFields: {
+    item: [
+      ['media:content', 'media:content', { keepArray: true }],
+      ['media:thumbnail', 'media:thumbnail'],
+      ['enclosure', 'enclosure'],
+    ]
+  }
+});
+
+let feedCache: { items: any[]; fetchedAt: number; lang: string } | null = null;
+const FEED_CACHE_TTL = 3600000; // 1 hour
+
+function extractImage(item: any): string | null {
+  if (item.enclosure?.url) return item.enclosure.url;
+  if (item['media:content']?.[0]?.$?.url) return item['media:content'][0].$.url;
+  if (item['media:thumbnail']?.$?.url) return item['media:thumbnail'].$.url;
+  const match = (item['content:encoded'] || item.content || '').match(/<img[^>]+src="([^"]+)"/);
+  if (match) return match[1];
+  return null;
+}
+
+app.get('/api/feed/inspiration', async (req, res) => {
+  try {
+    const lang = (req.query.lang as string) || 'de';
+    const now = Date.now();
+
+    if (feedCache && feedCache.lang === lang && (now - feedCache.fetchedAt) < FEED_CACHE_TTL) {
+      return res.json(feedCache.items);
+    }
+
+    const feedUrl = lang === 'de'
+      ? 'https://www.gutekueche.de/feed/tagesrezept'
+      : 'https://www.bbcgoodfood.com/feed';
+
+    let items: any[] = [];
+    try {
+      const feed = await rssParser.parseURL(feedUrl);
+      items = feed.items.slice(0, 6).map(item => ({
+        title: item.title || '',
+        link: item.link || '',
+        image: extractImage(item),
+        pubDate: item.pubDate || '',
+        snippet: (item.contentSnippet || '').slice(0, 150),
+      }));
+    } catch (e) {
+      // Fallback: TheMealDB random
+      for (let i = 0; i < 3; i++) {
+        try {
+          const r = await fetch('https://www.themealdb.com/api/json/v1/1/random.php');
+          const data = await r.json();
+          const meal = data.meals?.[0];
+          if (meal) {
+            items.push({
+              title: meal.strMeal,
+              link: `https://www.themealdb.com/meal/${meal.idMeal}`,
+              image: meal.strMealThumb,
+              pubDate: new Date().toISOString(),
+              snippet: meal.strCategory + ' · ' + meal.strArea,
+            });
+          }
+        } catch {}
+      }
+    }
+
+    feedCache = { items, fetchedAt: now, lang };
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch feed' });
   }
 });
 

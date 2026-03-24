@@ -72,7 +72,9 @@
     "allGood": "Todo en orden!",
     "openedPackagesTitle": "Paquetes abiertos ({{count}})",
     "noOpenedPackages": "No hay paquetes abiertos.",
-    "errorLoadingDashboard": "Error al cargar el panel"
+    "errorLoadingDashboard": "Error al cargar el panel",
+    "inspiration": "Inspiración",
+    "viewRecipe": "Ver receta"
   },
   "inventory": {
     "title": "Mi inventario",
