@@ -1,9 +1,5 @@
 🌍 [English](README.md) | [Deutsch](README_DE.md) | [Français](README_FR.md) | [Español](README_ES.md) | [Italiano](README_IT.md)
 
-<div align="center">
-<img width="1200" height="475" alt="FoodAI Banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 # 🍎 FoodAI
 
 **Master your inventory. Discover your next meal.**
