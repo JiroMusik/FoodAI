@@ -4,19 +4,19 @@ RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY server.ts tsconfig.json ./
-COPY dist/ dist/
+COPY --chown=node:node server.ts tsconfig.json ./
+COPY --chown=node:node dist/ dist/
+
+RUN mkdir -p /app/data && chown node:node /app/data
+
+USER node
 
 EXPOSE 3000
 
 ENV DB_DIR=/app/data
 ENV NODE_ENV=production
-
-RUN addgroup --system --gid 1001 app && adduser --system --uid 1001 --gid 1001 app
-RUN chown -R app:app /app
-USER app
 
 CMD ["npx", "tsx", "server.ts"]
