@@ -115,7 +115,7 @@ const initDB = () => {
   // Column Migrations
   const addColumn = (table: string, column: string, type: string) => {
     try {
-      db.exec(\`ALTER TABLE \${table} ADD COLUMN \${column} \${type}\`);
+      db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + type);
     } catch (e) {}
   };
 
