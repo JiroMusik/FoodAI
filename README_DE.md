@@ -1,5 +1,9 @@
 🌍 [English](README.md) | [Deutsch](README_DE.md) | [Fran&ccedil;ais](README_FR.md) | [Espa&ntilde;ol](README_ES.md) | [Italiano](README_IT.md)
 
+<div align="center">
+<img src="foodai_banner.png" alt="FoodAI Banner" width="100%" />
+</div>
+
 # FoodAI
 
 Ein selbst gehosteter Kücheninventar-Manager mit KI-gestütztem Barcode-Scanning, Rezeptgenerierung und Essensplanung. Entwickelt mit React, Express und SQLite.

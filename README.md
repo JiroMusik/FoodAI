@@ -1,5 +1,9 @@
 🌍 [English](README.md) | [Deutsch](README_DE.md) | [Français](README_FR.md) | [Español](README_ES.md) | [Italiano](README_IT.md)
 
+<div align="center">
+<img src="foodai_banner.png" alt="FoodAI Banner" width="100%" />
+</div>
+
 # 🍎 FoodAI
 
 **Master your inventory. Discover your next meal.**
@@ -47,14 +51,14 @@ Built for the modern kitchen. Fully installable **Progressive Web App** with smo
 
 All configurable in the Settings page — API key, model selection, separate advisor model for cost optimization.
 
-| Provider | Example Models |
-|----------|---------------|
-| Google Gemini | gemini-2.0-flash, gemini-1.5-pro |
-| OpenAI | gpt-4o, gpt-4o-mini |
-| Anthropic | claude-sonnet-4-20250514, claude-3-haiku |
-| DeepSeek | deepseek-chat |
-| Moonshot (Kimi) | moonshot-v1-8k |
-| Ollama (local) | llama3, mistral, llava |
+| Provider | Notes |
+|----------|-------|
+| Google Gemini | Any model (e.g. Gemini 2.5 Flash/Pro). Enter model ID in Settings. |
+| OpenAI | Any model (e.g. GPT-4o, o1). Enter model ID in Settings. |
+| Anthropic | Any model (e.g. Claude Opus 4.6, Sonnet). Enter model ID in Settings. |
+| DeepSeek | Any model (e.g. deepseek-chat). Enter model ID in Settings. |
+| Moonshot (Kimi) | Any model. Enter model ID in Settings. |
+| Ollama (local) | Any locally pulled model (llama3, mistral, llava, etc.) |
 
 ---
 
