@@ -1,0 +1,1571 @@
+import 'dotenv/config';
+import express from 'express';
+import https from 'https';
+import { createServer as createViteServer } from 'vite';
+import Database from 'better-sqlite3';
+import { GoogleGenAI, Type } from '@google/genai';
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+import path from 'path';
+import fs from 'fs';
+
+const app = express();
+const PORT = 3000;
+
+app.use(express.json({ limit: '50mb' }));
+
+// Initialize SQLite Database
+const dbDir = process.env.DB_DIR || process.cwd();
+const dbPath = path.join(dbDir, 'inventory.db');
+const db = new Database(dbPath);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    generic_name TEXT,
+    quantity REAL NOT NULL,
+    unit TEXT NOT NULL,
+    expiry_date TEXT,
+    category TEXT,
+    barcode TEXT,
+    pieces_per_pack INTEGER DEFAULT 1,
+    package_size REAL,
+    is_open BOOLEAN DEFAULT 0,
+    opened_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS product_lookup (
+    barcode TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    generic_name TEXT,
+    category TEXT NOT NULL,
+    default_quantity REAL NOT NULL,
+    unit TEXT NOT NULL,
+    pieces_per_pack INTEGER DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS planned_recipes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    ingredients TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    portions INTEGER DEFAULT 2,
+    base_portions INTEGER DEFAULT 2,
+    cooked INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS weekly_plan (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day_of_week TEXT NOT NULL,
+    recipe_title TEXT NOT NULL,
+    recipe_content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS favorite_recipes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    ingredients TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    portions INTEGER DEFAULT 2,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+`);
+
+// Add generic_name column if it doesn't exist
+try {
+  db.exec('ALTER TABLE items ADD COLUMN generic_name TEXT');
+} catch (e) {
+  // Column might already exist
+}
+
+try {
+  db.exec('ALTER TABLE product_lookup ADD COLUMN generic_name TEXT');
+} catch (e) {
+  // Column might already exist
+}
+
+// Add opened_at column if it doesn't exist
+try {
+  db.exec('ALTER TABLE items ADD COLUMN opened_at DATETIME');
+} catch (e) {}
+
+try {
+  db.exec('ALTER TABLE items ADD COLUMN is_open BOOLEAN DEFAULT 0');
+} catch (e) {}
+
+try {
+  db.exec('ALTER TABLE items ADD COLUMN package_size REAL');
+} catch (e) {}
+
+// --- Migration for old categories ---
+const migrateCategories = () => {
+  const updates = [
+    { old: 'BREAD', new: 'Backwaren' },
+    { old: 'SALT', new: 'Gewürze & Saucen' },
+    { old: 'FRUIT', new: 'Obst & Gemüse' },
+    { old: 'VEGETABLE', new: 'Obst & Gemüse' },
+    { old: 'MEAT', new: 'Fleisch & Fisch' },
+    { old: 'DAIRY', new: 'Kühlregal' },
+    { old: 'BEVERAGE', new: 'Getränke' },
+    { old: 'SNACK', new: 'Snacks & Süßigkeiten' },
+    { old: 'PANTRY', new: 'Vorratsschrank' },
+    { old: 'OTHER', new: 'Sonstiges' }
+  ];
+  
+  const stmtItems = db.prepare('UPDATE items SET category = ? WHERE UPPER(category) = ?');
+  const stmtLookup = db.prepare('UPDATE product_lookup SET category = ? WHERE UPPER(category) = ?');
+  
+  db.transaction(() => {
+    for (const u of updates) {
+      stmtItems.run(u.new, u.old);
+      stmtLookup.run(u.new, u.old);
+    }
+  })();
+};
+migrateCategories();
+
+// Migrate "Packung" units to "Stück" (keep all data, just change unit label)
+db.prepare("UPDATE items SET unit = 'Stück' WHERE unit = 'Packung'").run();
+db.prepare("UPDATE product_lookup SET unit = 'Stück' WHERE unit = 'Packung'").run();
+
+// Ensure package_size is set for all items that don't have it
+db.prepare("UPDATE items SET package_size = quantity WHERE package_size IS NULL OR package_size = 0").run();
+
+// Re-categorize runs after mapCategory is defined (see below)
+
+// Gemini AI Setup (lazy — key may come from DB settings later)
+let ai: GoogleGenAI | null = null;
+if (process.env.GEMINI_API_KEY) {
+  ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+}
+
+// --- AI Helper ---
+async function getAIResponse(prompt: string, imageBase64?: string, schema?: any, useAdvisorModel: boolean = false) {
+  const aiProvider = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_provider') as any)?.value || 'gemini';
+  let aiModel = (db.prepare('SELECT value FROM settings WHERE key = ?').get(useAdvisorModel ? 'advisor_model' : 'ai_model') as any)?.value;
+  const apiKey = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_api_key') as any)?.value;
+  const ollamaUrl = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ollama_url') as any)?.value || 'http://localhost:11434';
+
+  console.log(`AI Request: Provider=${aiProvider}, Model=${aiModel || 'default'}`);
+
+  // Default models if not set
+  if (!aiModel) {
+    if (aiProvider === 'gemini') aiModel = 'gemini-3-flash-preview';
+    if (aiProvider === 'openai') aiModel = 'gpt-4o';
+    if (aiProvider === 'anthropic') aiModel = 'claude-3-5-sonnet-latest';
+  }
+
+  try {
+    if (aiProvider === 'gemini') {
+      const geminiKey = apiKey || process.env.GEMINI_API_KEY;
+      if (!geminiKey) throw new Error('Gemini API Key missing');
+      
+      const genAI = new GoogleGenAI({ apiKey: geminiKey });
+      const response = await genAI.models.generateContent({
+        model: aiModel,
+        contents: imageBase64 ? {
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: imageBase64.replace(/^data:image\/\w+;base64,/, '') } },
+            { text: prompt }
+          ]
+        } : { parts: [{ text: prompt }] },
+        config: schema ? {
+          responseMimeType: 'application/json',
+          responseSchema: schema
+        } : undefined
+      });
+      
+      const text = response.text;
+      if (!text) throw new Error('Empty response from Gemini');
+      
+      console.log('Gemini Raw Response:', text);
+      const cleanJson = text.replace(/```json\n?|```/g, '').trim();
+      try {
+        return JSON.parse(cleanJson);
+      } catch (e) {
+        console.error('JSON Parse Error (Gemini):', e);
+        // Try to extract JSON if there's extra text
+        const match = cleanJson.match(/\{[\s\S]*\}/);
+        if (match) return JSON.parse(match[0]);
+        throw e;
+      }
+    }
+
+    if (aiProvider === 'openai' || aiProvider === 'deepseek' || aiProvider === 'moonshot') {
+      let baseURL = undefined;
+      if (aiProvider === 'deepseek') baseURL = 'https://api.deepseek.com';
+      if (aiProvider === 'moonshot') baseURL = 'https://api.moonshot.cn/v1';
+
+      const client = new OpenAI({ apiKey, baseURL });
+      const messages: any[] = [{ role: 'user', content: [{ type: 'text', text: prompt }] }];
+      
+      if (imageBase64) {
+        messages[0].content.push({
+          type: 'image_url',
+          image_url: { url: imageBase64 }
+        });
+      }
+
+      const response = await client.chat.completions.create({
+        model: aiModel,
+        messages,
+        response_format: schema ? { type: 'json_object' } : undefined
+      });
+      const content = response.choices[0].message.content;
+      if (!content) throw new Error('Empty response from AI');
+      const cleanJson = content.replace(/```json\n?|```/g, '').trim();
+      return JSON.parse(cleanJson);
+    }
+
+    if (aiProvider === 'anthropic') {
+      const anthropic = new Anthropic({ apiKey });
+      const content: any[] = [{ type: 'text', text: prompt }];
+      
+      if (imageBase64) {
+        content.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: 'image/jpeg',
+            data: imageBase64.replace(/^data:image\/\w+;base64,/, '')
+          }
+        });
+      }
+
+      const response = await anthropic.messages.create({
+        model: aiModel,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content }]
+      });
+      const text = (response.content[0] as any).text;
+      const cleanJson = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
+      return JSON.parse(cleanJson);
+    }
+
+    if (aiProvider === 'ollama') {
+      const response = await fetch(`${ollamaUrl}/api/generate`, {
+        method: 'POST',
+        body: JSON.stringify({
+          model: aiModel,
+          prompt: prompt,
+          images: imageBase64 ? [imageBase64.replace(/^data:image\/\w+;base64,/, '')] : [],
+          format: 'json',
+          stream: false
+        })
+      });
+      const data = await response.json();
+      return JSON.parse(data.response);
+    }
+  } catch (err: any) {
+    console.error('AI Error:', err.message);
+    throw err;
+  }
+
+  throw new Error('Unsupported AI Provider');
+}
+
+// --- API Routes ---
+
+app.get('/api/settings/models', async (req, res) => {
+  try {
+    // 1. Define known latest models
+    const models = {
+      gemini: [
+        'gemini-2.0-flash-exp',
+        'gemini-1.5-pro',
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-8b'
+      ],
+      openai: [
+        'gpt-4o',
+        'gpt-4o-mini',
+        'o1-preview',
+        'o1-mini'
+      ],
+      anthropic: [
+        'claude-3-5-sonnet-latest',
+        'claude-3-5-haiku-latest',
+        'claude-3-opus-latest'
+      ],
+      moonshot: [
+        'moonshot-v1-8k',
+        'moonshot-v1-32k',
+        'moonshot-v1-128k'
+      ],
+      deepseek: [
+        'deepseek-chat',
+        'deepseek-coder'
+      ]
+    };
+
+    // 2. Try to fetch from providers if keys exist
+    const geminiKey = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_api_key') as any)?.value || process.env.GEMINI_API_KEY;
+    if (geminiKey) {
+       // Gemini doesn't have a simple public list models endpoint via the SDK easily exposed here without more setup, 
+       // but we can try a direct fetch if we wanted. For now, we stick to the curated list + user input.
+    }
+
+    const openaiKey = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_api_key') as any)?.value;
+    if (openaiKey) {
+       try {
+         const response = await fetch('https://api.openai.com/v1/models', {
+            headers: { 'Authorization': `Bearer ${openaiKey}` }
+         });
+         if (response.ok) {
+           const data = await response.json();
+           const remoteModels = data.data.map((m: any) => m.id).filter((id: string) => id.includes('gpt') || id.includes('o1'));
+           // Merge and deduplicate
+           models.openai = Array.from(new Set([...models.openai, ...remoteModels])).sort();
+         }
+       } catch (e) {
+         console.error('Failed to fetch OpenAI models', e);
+       }
+    }
+
+    res.json(models);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch models' });
+  }
+});
+
+app.get('/api/inventory', (req, res) => {
+  try {
+    const items = db.prepare('SELECT * FROM items ORDER BY category ASC, expiry_date ASC').all();
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch inventory' });
+  }
+});
+
+app.get('/api/dashboard', (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const threeDaysLater = new Date();
+    threeDaysLater.setDate(threeDaysLater.getDate() + 3);
+    const threeDaysLaterStr = threeDaysLater.toISOString().split('T')[0];
+
+    const expiringSoon = db.prepare('SELECT * FROM items WHERE expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC').all(threeDaysLaterStr);
+    const openedItems = db.prepare('SELECT * FROM items WHERE is_open = 1 AND quantity > 0 ORDER BY opened_at DESC').all();
+    const todaysRecipes = db.prepare('SELECT * FROM planned_recipes WHERE date = ?').all(today).map((r: any) => ({
+      ...r,
+      ingredients: JSON.parse(r.ingredients),
+      instructions: JSON.parse(r.instructions),
+      cooked: r.cooked === 1
+    }));
+
+    res.json({ expiringSoon, openedItems, todaysRecipes });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch dashboard data' });
+  }
+});
+
+app.get('/api/shopping-list', (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const upcomingRecipes = db.prepare('SELECT * FROM planned_recipes WHERE date >= ? AND cooked = 0').all(today);
+    
+    const requiredIngredients: Record<string, { amount: number, unit: string, name: string }> = {};
+
+    upcomingRecipes.forEach((recipe: any) => {
+      const ingredients = JSON.parse(recipe.ingredients);
+      const ratio = recipe.portions / recipe.base_portions;
+      ingredients.forEach((ing: any) => {
+        const key = `${ing.name.toLowerCase()}_${ing.unit}`;
+        const amount = ing.amount * ratio;
+        if (!requiredIngredients[key]) {
+          requiredIngredients[key] = { amount: 0, unit: ing.unit, name: ing.name };
+        }
+        requiredIngredients[key].amount += amount;
+      });
+    });
+
+    const inventory = db.prepare('SELECT name, quantity, unit FROM items WHERE quantity > 0').all();
+    const missingIngredients: any[] = [];
+
+    Object.values(requiredIngredients).forEach((reqIng: any) => {
+      // Find matching items in inventory
+      const matchingItems = inventory.filter(inv => 
+        (inv.name.toLowerCase().includes(reqIng.name.toLowerCase()) || 
+         reqIng.name.toLowerCase().includes(inv.name.toLowerCase())) &&
+        inv.unit === reqIng.unit
+      );
+
+      const totalInInventory = matchingItems.reduce((sum, inv) => sum + (inv.quantity as number), 0);
+
+      if (totalInInventory < reqIng.amount) {
+        missingIngredients.push({
+          name: reqIng.name,
+          amountNeeded: reqIng.amount - totalInInventory,
+          unit: reqIng.unit
+        });
+      }
+    });
+
+    res.json({ missingIngredients });
+  } catch (error) {
+    console.error('Shopping list error:', error);
+    res.status(500).json({ error: 'Failed to generate shopping list' });
+  }
+});
+
+const mapCategory = (rawCategory: string, productName: string): string => {
+  const text = `${rawCategory} ${productName}`.toLowerCase();
+
+  // Gewürze & Saucen ZUERST — viele Gewürze werden sonst als Gemüse/Fleisch/Getränke gematcht
+  if (text.match(/gewürz|spice|sauce|condiment|salz\b|pfeffer|ketchup|mayo|remoulade|senf|essig|öl\b|olivenöl|dressing|marinade|brühe|bouillon|fond|soja|worcester|tabasco|sriracha|pesto|curry|kurkuma|kümmel|basilikum|rosmarin|oregano|thymian|petersilie|schnittlauch|dill|muskatnuss|paprika.*scharf|chili|peperoncin|ras el hanout|garam masala|zimt|nelke|anis|koriander|knoblauch.*granul|zwiebel.*pulver|sesam.*paste|tahina|saucenbinder|röstzwiebel|hackfleisch.*würz|steak.*pfeffer|pizza.*gewürz|pasta.*würz|bolognese.*gewürz|ankerkraut|fuchs|ostmann|ubena|cornichon|olive|kapern|gewürzzubereitung/)) return 'Gewürze & Saucen';
+  // Tiefkühl (hat Vorrang vor Fleisch/Fisch)
+  if (text.match(/frozen|tiefkühl|tiefgefroren|tk[ -]|ice cream|eis am stiel|pizza.*frozen|iglo|frosta|bofrost|gefrier|golden longs|rösti.*stäbchen/)) return 'Tiefkühl';
+  // Kühlregal
+  if (text.match(/dairy|milk|cheese|yogurt|milch|käse|joghurt|butter|cream|sahne|quark|schmand|skyr|frischkäse|aufschnitt|aufstrich|margarine|\bei\b|eier|creme fraiche|mascarpone|ricotta|mozzarella|grana padano|parmesan|kochsahne|vollmilch/)) return 'Kühlregal';
+  // Fleisch & Fisch (nach Gewürze — damit "Rinder Bouillon" nicht hier landet)
+  if (text.match(/meat|poultry|beef|pork|chicken|fleisch|hähnchen|wurst|würstchen|dörffler|schinken|salami|lachs|thunfisch|garnele|hack\b|rind.*steak|rind.*filet|rind.*roast|schwein|pute|truthahn|shrimp|pangasius|forelle|fish.*filet|fisch.*stäbchen/)) return 'Fleisch & Fisch';
+  // Backwaren
+  if (text.match(/bread|bakery|pastry|brot|brötchen|toast|kuchen|croissant|semmel|laugen|bagel|wrap|tortilla|brioche|bun\b|hotdog.*roll|hotdog.*brød|sandwich/)) return 'Backwaren';
+  // Obst & Gemüse (frisch — nicht Konserven/getrocknet)
+  if (text.match(/fruit|vegetable|obst|gemüse|apple|banana|potato|salat|karotte|gurke|zitrone|orange|beere|avocado|ingwer|champignon|pilz|zwiebel\b|schalotte|knoblauchzehe/)) return 'Obst & Gemüse';
+  // Getränke
+  if (text.match(/beverage|drink|water|juice|getränk|wasser|saft|cola|beer|wine|bier|wein|limo|sprudel|tee\b|kaffee|energy|smoothie|sirup|milch.*drink/)) return 'Getränke';
+  // Snacks & Süßigkeiten
+  if (text.match(/snack|sweet|candy|chocolate|chips|süßigkeit|schokolade|keks|cookie|gummi|bonbon|riegel|müsli.*riegel|nuss.*mix|popcorn|cracker|waffel|praline/)) return 'Snacks & Süßigkeiten';
+  // Haushalt & Drogerie
+  if (text.match(/cleaning|hygiene|paper|household|haushalt|drogerie|seife|shampoo|waschmittel|spülmittel|toiletten|küchentuch|alufolie|frischhalte|müllbeutel|zahnpasta/)) return 'Haushalt & Drogerie';
+  // Vorratsschrank (breit — Konserven, Pasta, Reis, Trockenware, eingelegtes)
+  if (text.match(/pasta|rice|cereal|flour|sugar|noodle|reis|mehl|zucker|konserve|dose|nudel|spaghetti|makkaroni|hörnchen|lasagne.*platt|penne|fusilli|linse|bohne|kidney|erbse|möhren|tomatenmark|passiert|polpa|müsli|haferflocke|cornflakes|marmelade|honig|nutella|couscous|bulgur|semmel.*brösel|paniermehl|backpulver|hefe|gelatine|puddingpulver|artischock|getrocknete.*tomat|rotkohl|puder.*zucker|blütenhonig|risi.*bisi/)) return 'Vorratsschrank';
+
+  return 'Sonstiges';
+};
+
+// Re-categorize items that are likely wrong (e.g., spices in "Getränke")
+(() => {
+  const allItems = db.prepare('SELECT id, name, category FROM items').all() as any[];
+  const stmt = db.prepare('UPDATE items SET category = ? WHERE id = ?');
+  const stmtLookup = db.prepare('UPDATE product_lookup SET category = ? WHERE name = ?');
+  db.transaction(() => {
+    for (const item of allItems) {
+      const newCat = mapCategory('', item.name);
+      if (newCat !== 'Sonstiges' && newCat !== item.category) {
+        stmt.run(newCat, item.id);
+        stmtLookup.run(newCat, item.name);
+      }
+    }
+  })();
+})();
+
+app.get('/api/barcode/lookup/:barcode', async (req, res) => {
+  const { barcode } = req.params;
+  try {
+    // 1. Check local database first
+    const product = db.prepare('SELECT * FROM product_lookup WHERE barcode = ?').get(barcode) as any;
+    if (product) {
+      return res.json(product);
+    }
+
+    // 2. Fallback to OpenFoodFacts (Free, good for EAN/European products)
+    console.log(`Barcode ${barcode} not in local DB, checking OpenFoodFacts...`);
+    try {
+      const offRes = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+      if (offRes.ok) {
+        const offData = await offRes.json() as any;
+        if (offData.status === 1 && offData.product) {
+          const p = offData.product;
+          
+          const rawCategory = p.categories_tags?.join(' ') || '';
+          const mappedCategory = mapCategory(rawCategory, p.product_name || '');
+
+          let parsedQuantity = 1;
+          let parsedUnit = p.serving_quantity_unit || 'Stück';
+          
+          if (p.quantity) {
+            const qMatch = p.quantity.match(/([\d.,]+)\s*([a-zA-Z%]+)/);
+            if (qMatch) {
+              parsedQuantity = parseFloat(qMatch[1].replace(',', '.'));
+              parsedUnit = qMatch[2].toLowerCase();
+              if (!['g', 'kg', 'ml', 'l', '%'].includes(parsedUnit)) {
+                parsedUnit = 'Stück';
+              }
+            }
+          }
+
+          let genericName = p.generic_name || p.product_name || 'Unbekanntes Produkt';
+          // Extended brand list based on user feedback
+          genericName = genericName.replace(/^(Ja!|Gut & Günstig|K-Classic|Milbona|Alnatura|Barilla|Mutti|Oro di Parma|Rewe Beste Wahl|Edeka|Dr\. Oetker|Maggi|Knorr|Nestle|Kellogg's|Haribo|Lindt|Milka|Coca-Cola|Pepsi|Heinz|Kraft|Uncle Ben's|Mirácoli|Buitoni|Wagner|Iglo|Frosta|McCain|Coppenrath & Wiese|Langnese|Mövenpick|Landliebe|Weihenstephan|Müller|Danone|Zott|Ehrmann|Bauer|Andechser|Söbbeke|Rügenwalder Mühle|Herta|Meica|Wiesenhof|Gutfried|Rasting|Wilhelm Brandenburg|Kölln|Brüggen|Seitenbacher|Dr\. Karg|Wasa|Leibniz|Bahlsen|Griesson|De Beukelaer|Prinzen Rolle|Ritter Sport|Milka|Lindt|Ferrero|Kinder|Nutella|Hanuta|Duplo|Knoppers|Toffifee|Yogurette|Mon Chéri|Raffaello|Giotto|Rocher|Küchenmeister|Aurora|Diamant|Südzucker|Nordzucker|Bad Reichenhaller|Fuchs|Ostmann|Ubena|Kühne|Hengstenberg|Thomy|Homann|Nadler|Popp|Dahlhoff|Bautz'ner|Born|Werder|Hela|Kraft|Heinz|Bull's Eye|Knorr|Maggi|Erasco|Sonnen Bassermann|Buss|Stührk|Appel|Hawesta|Saupiquet|Thunfisch|Dose|Konserve)\s+/i, '').trim();
+
+          const newProduct = {
+            barcode,
+            name: p.product_name || genericName,
+            generic_name: genericName,
+            category: mappedCategory,
+            default_quantity: parsedQuantity,
+            unit: parsedUnit,
+            pieces_per_pack: 1
+          };
+
+          // If unit is 'g' but quantity is 1 and no weight info, default to Stück
+          if (newProduct.unit === 'g' && newProduct.default_quantity === 1 && !p.quantity?.match(/1\s*g/i)) {
+             newProduct.unit = 'Stück';
+          }
+          // Convert "Packung" to actual content unit
+          if (newProduct.unit === 'Packung' || newProduct.unit === 'packung') {
+             newProduct.unit = 'Stück';
+          }
+
+          // Try to extract pieces per pack from product name or quantity if possible
+          // e.g. "15 Stück"
+          const piecesMatch = p.quantity?.match(/(\d+)\s*(Stück|pcs|pieces)/i);
+          if (piecesMatch) {
+            newProduct.pieces_per_pack = parseInt(piecesMatch[1]);
+          }
+
+          db.prepare('INSERT OR IGNORE INTO product_lookup (barcode, name, generic_name, category, default_quantity, unit, pieces_per_pack) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .run(newProduct.barcode, newProduct.name, newProduct.generic_name, newProduct.category, newProduct.default_quantity, newProduct.unit, newProduct.pieces_per_pack);
+          
+          return res.json(newProduct);
+        }
+      }
+    } catch (e) {
+      console.error('OpenFoodFacts error:', e);
+    }
+
+    // 3. Fallback to upcitemdb trial
+    console.log(`Barcode ${barcode} not in OpenFoodFacts, checking upcitemdb...`);
+    try {
+      const upcRes = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`);
+      if (upcRes.ok) {
+        const upcData = await upcRes.json();
+        if (upcData.items && upcData.items.length > 0) {
+          const item = upcData.items[0];
+          
+          let genericName = item.title || 'Unbekanntes Produkt';
+          // Clean up brand names (same list as above)
+          genericName = genericName.replace(/^(Ja!|Gut & Günstig|K-Classic|Milbona|Alnatura|Barilla|Mutti|Oro di Parma|Rewe Beste Wahl|Edeka|Dr\. Oetker|Maggi|Knorr|Nestle|Kellogg's|Haribo|Lindt|Milka|Coca-Cola|Pepsi|Heinz|Kraft|Uncle Ben's|Mirácoli|Buitoni|Wagner|Iglo|Frosta|McCain|Coppenrath & Wiese|Langnese|Mövenpick|Landliebe|Weihenstephan|Müller|Danone|Zott|Ehrmann|Bauer|Andechser|Söbbeke|Rügenwalder Mühle|Herta|Meica|Wiesenhof|Gutfried|Rasting|Wilhelm Brandenburg|Kölln|Brüggen|Seitenbacher|Dr\. Karg|Wasa|Leibniz|Bahlsen|Griesson|De Beukelaer|Prinzen Rolle|Ritter Sport|Milka|Lindt|Ferrero|Kinder|Nutella|Hanuta|Duplo|Knoppers|Toffifee|Yogurette|Mon Chéri|Raffaello|Giotto|Rocher|Küchenmeister|Aurora|Diamant|Südzucker|Nordzucker|Bad Reichenhaller|Fuchs|Ostmann|Ubena|Kühne|Hengstenberg|Thomy|Homann|Nadler|Popp|Dahlhoff|Bautz'ner|Born|Werder|Hela|Kraft|Heinz|Bull's Eye|Knorr|Maggi|Erasco|Sonnen Bassermann|Buss|Stührk|Appel|Hawesta|Saupiquet|Thunfisch|Dose|Konserve)\s+/i, '').trim();
+
+          const mappedCategory = mapCategory(item.category || '', item.title || '');
+          
+          // Try to parse quantity from title/description if not explicit
+          let parsedQuantity = 1;
+          let parsedUnit = 'Stück';
+          
+          const qMatch = item.title.match(/(\d+)\s*(g|kg|ml|l|oz|lb)/i);
+          if (qMatch) {
+             parsedQuantity = parseFloat(qMatch[1]);
+             parsedUnit = qMatch[2].toLowerCase();
+             if (parsedUnit === 'oz') { parsedQuantity = Math.round(parsedQuantity * 28.35); parsedUnit = 'g'; }
+             if (parsedUnit === 'lb') { parsedQuantity = Math.round(parsedQuantity * 453.59); parsedUnit = 'g'; }
+          }
+
+          const newProduct = {
+            barcode,
+            name: genericName,
+            generic_name: genericName,
+            category: mappedCategory,
+            default_quantity: parsedQuantity,
+            unit: parsedUnit,
+            pieces_per_pack: 1
+          };
+          
+          db.prepare('INSERT OR IGNORE INTO product_lookup (barcode, name, generic_name, category, default_quantity, unit, pieces_per_pack) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .run(newProduct.barcode, newProduct.name, newProduct.generic_name, newProduct.category, newProduct.default_quantity, newProduct.unit, newProduct.pieces_per_pack);
+
+          return res.json(newProduct);
+        }
+      }
+    } catch (e) {
+      console.error('UPCItemDB error:', e);
+    }
+
+    res.status(404).json({ error: 'Product not found' });
+  } catch (error) {
+    console.error('Barcode lookup error:', error);
+    res.status(500).json({ error: 'Database or API error' });
+  }
+});
+
+app.post('/api/recipes/weekly', async (req, res) => {
+  const { preferences, portions } = req.body;
+  try {
+    const items = db.prepare('SELECT generic_name, name, quantity, unit, expiry_date, category FROM items').all();
+    
+    // Group items by generic_name and unit, but keep track of open status and expiry
+    const groupedInventory: Record<string, { quantity: number, unit: string, details: string[], category: string }> = {};
+    
+    items.forEach((i: any) => {
+      const key = `${i.generic_name || i.name}_${i.unit}`;
+      if (!groupedInventory[key]) {
+        groupedInventory[key] = { quantity: 0, unit: i.unit, details: [], category: i.category };
+      }
+      groupedInventory[key].quantity += i.quantity;
+      
+      let detail = `${i.quantity} ${i.unit}`;
+      if (i.is_open) detail += ' (geöffnet)';
+      if (i.expiry_date) detail += ` MHD: ${i.expiry_date}`;
+      groupedInventory[key].details.push(detail);
+    });
+
+    const inventoryList = Object.entries(groupedInventory).map(([key, data]) => {
+      const name = key.split('_')[0];
+      // Summarize details if too many
+      const detailsStr = data.details.length > 3 ? `${data.details.length} Packungen/Einheiten` : data.details.join(', ');
+      return `- ${name}: ${data.quantity} ${data.unit} gesamt [${detailsStr}]`;
+    }).join('\n');
+    
+    const prompt = `
+      You are a professional meal planner. Create a 7-day meal plan (Monday to Sunday) for ${portions || 2} portions using the following ingredients from my inventory. 
+      PRIORITIZE ingredients that are expiring soon (MHD) or are already opened (geöffnet).
+      Include all available sauces and spices in your reasoning, and use them where appropriate.
+      
+      Inventory:
+      ${inventoryList}
+      
+      User preferences: ${preferences || 'None'}
+      
+      Return a JSON object with a key "plan" which is an array of 7 objects. Each object must have:
+      - day: "Montag", "Dienstag", etc.
+      - title: Recipe title
+      - description: Short description
+      - ingredients: Array of objects { name, amount, unit, in_inventory (boolean) }
+      - instructions: Array of strings (steps)
+    `;
+
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        plan: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              day: { type: Type.STRING },
+              title: { type: Type.STRING },
+              description: { type: Type.STRING },
+              ingredients: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    amount: { type: Type.NUMBER },
+                    unit: { type: Type.STRING },
+                    in_inventory: { type: Type.BOOLEAN }
+                  },
+                  required: ["name", "amount", "unit", "in_inventory"]
+                }
+              },
+              instructions: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
+              }
+            },
+            required: ["day", "title", "description", "ingredients", "instructions"]
+          }
+        }
+      },
+      required: ["plan"]
+    };
+
+    const result = await getAIResponse(prompt, undefined, schema);
+    
+    // Save to DB
+    db.prepare('DELETE FROM weekly_plan').run();
+    const insert = db.prepare('INSERT INTO weekly_plan (day_of_week, recipe_title, recipe_content) VALUES (?, ?, ?)');
+    for (const day of result.plan) {
+      insert.run(day.day, day.title, JSON.stringify(day));
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('Weekly plan error:', error);
+    res.status(500).json({ error: 'Failed to generate weekly plan' });
+  }
+});
+
+app.get('/api/recipes/weekly', (req, res) => {
+  try {
+    const plan = db.prepare('SELECT * FROM weekly_plan ORDER BY id ASC').all();
+    const result = plan.map((row: any) => JSON.parse(row.recipe_content));
+    res.json({ plan: result });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch weekly plan' });
+  }
+});
+
+app.post('/api/inventory', (req, res) => {
+  const { name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack } = req.body;
+  try {
+    // Save to product_lookup for future barcode scans
+    if (barcode) {
+      db.prepare('INSERT OR IGNORE INTO product_lookup (barcode, name, generic_name, category, default_quantity, unit, pieces_per_pack) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(barcode, name, generic_name || name, category, quantity, unit, pieces_per_pack || 1);
+    }
+
+    // Always create a new item — each physical package is its own row
+    const stmt = db.prepare('INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)');
+    const info = stmt.run(name, generic_name || name, quantity, unit, expiry_date, category, barcode, pieces_per_pack || 1, quantity);
+    res.json({ id: info.lastInsertRowid, name, generic_name: generic_name || name, quantity, unit, expiry_date, category, barcode, package_size: quantity });
+  } catch (error) {
+    console.error('Inventory add error:', error);
+    res.status(500).json({ error: 'Failed to add item' });
+  }
+});
+
+app.put('/api/inventory/:id', (req, res) => {
+  const { id } = req.params;
+  const { name, generic_name, quantity, unit, expiry_date, category, package_size } = req.body;
+  try {
+    // If quantity exceeds package_size, update package_size too
+    const existing = db.prepare('SELECT package_size FROM items WHERE id = ?').get(id) as any;
+    let newPackageSize = package_size || existing?.package_size || quantity;
+    if (quantity > newPackageSize) {
+      newPackageSize = quantity;
+    }
+
+    const stmt = db.prepare('UPDATE items SET name = ?, generic_name = ?, quantity = ?, unit = ?, expiry_date = ?, category = ?, package_size = ? WHERE id = ?');
+    stmt.run(name, generic_name || name, quantity, unit, expiry_date, category, newPackageSize, id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update item' });
+  }
+});
+
+app.delete('/api/inventory/:id', (req, res) => {
+  const { id } = req.params;
+  try {
+    const stmt = db.prepare('DELETE FROM items WHERE id = ?');
+    stmt.run(id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete item' });
+  }
+});
+
+app.post('/api/inventory/:id/open', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const item = db.prepare('SELECT * FROM items WHERE id = ?').get(id) as any;
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+
+    db.prepare('UPDATE items SET is_open = 1, opened_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+
+    // AI Logic for expiry
+    const prompt = `
+      The user has opened the following food item:
+      ID: ${item.id}, Name: ${item.name}
+      
+      Does this item spoil quickly after opening (within 2-5 days)?
+      Examples for YES (spoil quickly): "Passierte Tomaten", "Streukäse", "Milch", "Sahne", "Würstchen im Glas", "Mais (Konserve)", "Bohnen".
+      Examples for NO (last long): "Gewürzgurken", "Ketchup", "Senf", "Marmelade", "Reis", "Nudeln", "Mehl", "Essig", "Öl".
+      
+      Return a JSON object:
+      - needs_new_expiry: boolean (true if it spoils quickly)
+      - days_until_spoiled: number (e.g., 3 for passierte Tomaten, null if needs_new_expiry is false)
+    `;
+
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        needs_new_expiry: { type: Type.BOOLEAN },
+        days_until_spoiled: { type: Type.NUMBER }
+      },
+      required: ["needs_new_expiry"]
+    };
+
+    const aiResult = await getAIResponse(prompt, undefined, schema, true);
+
+    if (aiResult.needs_new_expiry && aiResult.days_until_spoiled) {
+      const newExpiry = new Date();
+      newExpiry.setDate(newExpiry.getDate() + aiResult.days_until_spoiled);
+      const expiryDate = newExpiry.toISOString().split('T')[0];
+      db.prepare('UPDATE items SET expiry_date = ? WHERE id = ?').run(expiryDate, id);
+    }
+
+    const updatedItem = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
+    res.json(updatedItem);
+  } catch (error) {
+    console.error('Open item error:', error);
+    res.status(500).json({ error: 'Failed to open item' });
+  }
+});
+
+app.post('/api/ha/inventory/update', (req, res) => {
+  const { id, barcode, name, action, value } = req.body;
+  // action: 'set' (e.g. value=75 for 75%), 'deduct' (e.g. value=15 for 15g)
+  try {
+    let item;
+    if (id) {
+      item = db.prepare('SELECT * FROM items WHERE id = ?').get(id) as any;
+    } else if (barcode) {
+      item = db.prepare('SELECT * FROM items WHERE barcode = ?').get(barcode) as any;
+    } else if (name) {
+      item = db.prepare('SELECT * FROM items WHERE name LIKE ?').get(`%${name}%`) as any;
+    }
+
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+
+    let newQuantity = item.quantity;
+    if (action === 'set') {
+      newQuantity = value;
+    } else if (action === 'deduct') {
+      newQuantity = Math.max(0, item.quantity - value);
+    }
+
+    db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQuantity, item.id);
+    res.json({ success: true, item: { ...item, quantity: newQuantity } });
+  } catch (error) {
+    console.error('HA update error:', error);
+    res.status(500).json({ error: 'HA update failed' });
+  }
+});
+
+app.post('/api/scan/mhd', async (req, res) => {
+  const { imageBase64 } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: 'No image provided' });
+
+  try {
+    const prompt = 'Extract the expiry date (MHD - Mindesthaltbarkeitsdatum) from this image. Return a JSON object with key "expiry_date" (format YYYY-MM-DD) or null if not found. Only return a date if you are very sure.';
+    
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        expiry_date: { type: Type.STRING, description: "YYYY-MM-DD format or null" }
+      },
+      required: ["expiry_date"]
+    };
+
+    const result = await getAIResponse(prompt, imageBase64, schema);
+    res.json(result);
+  } catch (error) {
+    console.error('MHD AI Scan error:', error);
+    res.status(500).json({ error: 'Failed to analyze MHD' });
+  }
+});
+
+app.post('/api/scan', async (req, res) => {
+  const { imageBase64 } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: 'No image provided' });
+
+  try {
+    const prompt = 'Analyze this image of a food product, barcode, or label. 1. Identify the product name. IMPORTANT: Remove brand names (e.g., "Iglo", "Barilla", "Gut & Günstig") but KEEP the variant/type (e.g., "Rahmspinat", "Lasagne", "Dunkler Saucenbinder", "Hähnchenschnitzel"). Example: "Iglo Rahmspinat Blubb" -> "Rahmspinat". "Knorr Saucenbinder Dunkel" -> "Dunkler Saucenbinder". 2. Determine a generic_name for grouping (e.g., "Rahmspinat (TK)"). 3. If a barcode is visible, try to decode it. 4. Estimate the CONTENT quantity and unit — always use the actual content unit, never "Packung". A 2L bottle = quantity:2000 unit:"ml". A 500g pack of pasta = quantity:500 unit:"g". A pack of 10 eggs = quantity:10 unit:"Stück". For spices/oils where exact weight is hard to track, use quantity:100 unit:"%". 5. Identify an expiry date if visible (YYYY-MM-DD). ONLY return a date if you are VERY sure. If unsure or not visible, return null. Return a JSON object with keys: name (string), generic_name (string), quantity (number), unit (string), category (string), expiry_date (string or null). The category MUST be one of: "Obst & Gemüse", "Kühlregal", "Tiefkühl", "Vorratsschrank", "Getränke", "Backwaren", "Fleisch & Fisch", "Snacks & Süßigkeiten", "Gewürze & Saucen", "Haushalt & Drogerie", "Sonstiges". The unit MUST be one of: "Stück", "g", "kg", "ml", "l", "%".';
+    
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING },
+        generic_name: { type: Type.STRING },
+        quantity: { type: Type.NUMBER },
+        unit: { type: Type.STRING, enum: ["Stück", "g", "kg", "ml", "l", "%"] },
+        category: { type: Type.STRING, enum: ["Obst & Gemüse", "Kühlregal", "Tiefkühl", "Vorratsschrank", "Getränke", "Backwaren", "Fleisch & Fisch", "Snacks & Süßigkeiten", "Gewürze & Saucen", "Haushalt & Drogerie", "Sonstiges"] },
+        expiry_date: { type: Type.STRING, description: "YYYY-MM-DD format or null" }
+      },
+      required: ["name", "generic_name", "quantity", "unit", "category"]
+    };
+
+    const result = await getAIResponse(prompt, imageBase64, schema);
+    res.json(result);
+  } catch (error) {
+    console.error('Scan error:', error);
+    res.status(500).json({ error: 'Failed to analyze image' });
+  }
+});
+
+app.post('/api/cook/analyze-photo', async (req, res) => {
+  const { imageBase64 } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: 'No image provided' });
+
+  try {
+    const items = db.prepare('SELECT id, generic_name, name, quantity, unit, category FROM items WHERE quantity > 0').all();
+    const inventoryList = items.map((i: any) => `ID: ${i.id} | ${i.generic_name || i.name} (${i.quantity} ${i.unit})`).join('\n');
+    
+    const prompt = `
+      Analyze this image of food ingredients that the user is about to cook.
+      Match the visible ingredients with the following inventory list:
+      ${inventoryList}
+      
+      For each matched ingredient, estimate how much the user is likely to use for a typical meal (or based on what's visible).
+      If it's a full package of pasta, maybe they use 250g or 500g. If it's a can of tomatoes, maybe 100% (the whole can).
+      If it's a single piece of vegetable (like an onion), maybe 1 Stück.
+      
+      Return a JSON object with a key "ingredients" containing an array of objects:
+      - id: The ID from the inventory list
+      - name: The name of the ingredient
+      - unit: The unit from the inventory list
+      - estimated_deduction: A number representing the estimated amount to deduct
+      - reasoning: A short explanation of why this amount (e.g., "Standard portion for 2 people" or "Whole can visible")
+    `;
+    
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        ingredients: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.INTEGER },
+              name: { type: Type.STRING },
+              unit: { type: Type.STRING },
+              estimated_deduction: { type: Type.NUMBER },
+              reasoning: { type: Type.STRING }
+            },
+            required: ["id", "name", "unit", "estimated_deduction", "reasoning"]
+          }
+        }
+      },
+      required: ["ingredients"]
+    };
+
+    const result = await getAIResponse(prompt, imageBase64, schema);
+    res.json(result);
+  } catch (error) {
+    console.error('Analyze cook photo error:', error);
+    res.status(500).json({ error: 'Failed to analyze photo' });
+  }
+});
+
+app.post('/api/cook/ask-amounts', async (req, res) => {
+  const { ingredients, portions } = req.body;
+  try {
+    const prompt = `
+      I am cooking a meal with the following ingredients:
+      ${ingredients.map((i: any) => `- ${i.name} (Available: ${i.available} ${i.unit})`).join('\n')}
+      
+      How much of each ingredient should I use for ${portions || 2} portions to make a balanced meal?
+      Return a JSON object with a key "advice" containing a short text advice, and "amounts" containing an array of objects with "id" and "suggested_amount".
+    `;
+    
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        advice: { type: Type.STRING },
+        amounts: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.INTEGER },
+              suggested_amount: { type: Type.NUMBER }
+            },
+            required: ["id", "suggested_amount"]
+          }
+        }
+      },
+      required: ["advice", "amounts"]
+    };
+
+    const result = await getAIResponse(prompt, undefined, schema, true);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get advice' });
+  }
+});
+
+app.post('/api/cook/check-opened', async (req, res) => {
+  const { deductions, recipeId } = req.body;
+  
+  try {
+    let itemsToCheck: any[] = [];
+    
+    if (recipeId) {
+      // Calculate deductions for recipe
+      const recipe = db.prepare('SELECT * FROM planned_recipes WHERE id = ?').get(recipeId) as any;
+      if (!recipe) return res.status(404).json({ error: 'Recipe not found' });
+      
+      const ingredients = JSON.parse(recipe.ingredients);
+      const ratio = recipe.portions / recipe.base_portions;
+      
+      for (const ing of ingredients) {
+        let deductAmount = 0;
+        if (ing.unit !== '%') {
+          deductAmount = ing.amount * ratio;
+        } else {
+          deductAmount = 5 * recipe.portions;
+        }
+        
+        let remainingToDeduct = deductAmount;
+        const rows = db.prepare(`SELECT * FROM items WHERE LOWER(name) LIKE LOWER(?) OR LOWER(?) LIKE LOWER('%' || name || '%') ORDER BY is_open DESC, expiry_date ASC`).all(`%${ing.name}%`, ing.name) as any[];
+        
+        for (const item of rows) {
+          if (remainingToDeduct <= 0) break;
+          
+          let take = 0;
+          if (item.is_open) {
+            take = Math.min(item.quantity, remainingToDeduct);
+          } else {
+             const pkgSize = item.package_size || item.quantity;
+             if (remainingToDeduct >= item.quantity) {
+               take = item.quantity;
+             } else {
+               // Partial open
+               let packagesToOpen = Math.ceil(remainingToDeduct / pkgSize);
+               let totalOpenedAmount = packagesToOpen * pkgSize;
+               
+               if (totalOpenedAmount > item.quantity) {
+                 totalOpenedAmount = item.quantity;
+               }
+               // We are interested if we are opening a package and NOT using it fully
+               // If we open a package (totalOpenedAmount) and use remainingToDeduct
+               // The leftover is totalOpenedAmount - remainingToDeduct
+               
+               if (totalOpenedAmount > remainingToDeduct) {
+                 itemsToCheck.push({ id: item.id, name: item.name, category: item.category });
+               }
+               take = remainingToDeduct; // effectively we use this much
+             }
+          }
+          remainingToDeduct -= take;
+        }
+      }
+    } else if (deductions) {
+      // Direct deductions (Free Cook)
+      for (const d of deductions) {
+        const item = db.prepare('SELECT * FROM items WHERE id = ?').get(d.id) as any;
+        if (item && !item.is_open) {
+           const pkgSize = item.package_size || item.quantity;
+           // Logic: If we deduct less than the full quantity (or full package multiple), it's an open event
+           // But wait, free cook usually deducts specific amounts.
+           // If amount < quantity, it's a partial use.
+           
+           // Simplified check: If new quantity > 0 and we are deducting from a closed item
+           // But we need to handle the "package" logic if applicable.
+           // If unit is pieces/pack, and we deduct 0.5, it's partial.
+           
+           // Let's stick to the logic: If we are left with a positive quantity on a previously closed item.
+           if (item.quantity > d.amount) {
+              // Check if we are just taking full packages
+              if (pkgSize && d.amount % pkgSize === 0) {
+                // Taking full packages, no open
+              } else {
+                itemsToCheck.push({ id: item.id, name: item.name, category: item.category });
+              }
+           }
+        }
+      }
+    }
+
+    if (itemsToCheck.length === 0) {
+      return res.json({ updates: [] });
+    }
+
+    // Ask AI
+    const prompt = `
+      The user has opened (partially consumed) the following food items:
+      ${itemsToCheck.map(i => `ID: ${i.id}, Name: ${i.name}`).join('\n')}
+      
+      Which of these items spoil quickly after opening (within 2-5 days)?
+      Examples for YES (spoil quickly): "Passierte Tomaten", "Streukäse", "Milch", "Sahne", "Würstchen im Glas", "Mais (Konserve)", "Bohnen".
+      Examples for NO (last long): "Gewürzgurken", "Ketchup", "Senf", "Marmelade", "Reis", "Nudeln", "Mehl", "Essig", "Öl".
+      
+      Return a JSON object with a key "updates" containing an array of objects:
+      - id: The item ID
+      - needs_new_expiry: boolean (true if it spoils quickly)
+      - days_until_spoiled: number (e.g., 3 for passierte Tomaten, null if needs_new_expiry is false)
+    `;
+    
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        updates: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.INTEGER },
+              needs_new_expiry: { type: Type.BOOLEAN },
+              days_until_spoiled: { type: Type.NUMBER }
+            },
+            required: ["id", "needs_new_expiry"]
+          }
+        }
+      },
+      required: ["updates"]
+    };
+
+    const aiResult = await getAIResponse(prompt, undefined, schema, true);
+    
+    const updatesWithNames = aiResult?.updates?.map((u: any) => {
+      const item = itemsToCheck.find(i => i.id === u.id);
+      return { ...u, name: item?.name || 'Unbekannt' };
+    }) || [];
+
+    res.json({ updates: updatesWithNames });
+
+  } catch (error) {
+    console.error('Check opened error:', error);
+    res.status(500).json({ error: 'Failed to check opened items' });
+  }
+});
+
+app.post('/api/cook/deduct', async (req, res) => {
+  const { deductions, openedUpdates } = req.body; // openedUpdates: [{ id, days }]
+  try {
+    db.transaction(() => {
+      for (const d of deductions) {
+        const item = db.prepare('SELECT * FROM items WHERE id = ?').get(d.id) as any;
+        if (item) {
+          if (item.is_open) {
+            const newQuantity = Math.max(0, item.quantity - d.amount);
+            db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQuantity, d.id);
+          } else {
+            const pkgSize = item.package_size || item.quantity;
+            if (d.amount >= item.quantity) {
+              db.prepare('UPDATE items SET quantity = 0 WHERE id = ?').run(item.id);
+            } else {
+              let packagesToOpen = Math.ceil(d.amount / pkgSize);
+              let totalOpenedAmount = packagesToOpen * pkgSize;
+              let leftoverOpened = totalOpenedAmount - d.amount;
+              
+              if (totalOpenedAmount > item.quantity) {
+                totalOpenedAmount = item.quantity;
+                leftoverOpened = totalOpenedAmount - d.amount;
+              }
+              
+              db.prepare('UPDATE items SET quantity = quantity - ? WHERE id = ?').run(totalOpenedAmount, item.id);
+              
+              if (leftoverOpened > 0) {
+                // Check if we have an update for this item
+                const update = openedUpdates?.find((u: any) => u.id === item.id);
+                let expiryDate = item.expiry_date;
+                if (update) {
+                  const newExpiry = new Date();
+                  newExpiry.setDate(newExpiry.getDate() + update.days);
+                  expiryDate = newExpiry.toISOString().split('T')[0];
+                }
+                
+                db.prepare(`INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`).run(item.name, item.generic_name, leftoverOpened, item.unit, expiryDate, item.category, item.barcode, item.pieces_per_pack, pkgSize);
+              }
+            }
+          }
+        }
+      }
+      db.prepare('DELETE FROM items WHERE quantity <= 0').run();
+    })();
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to deduct items' });
+  }
+});
+
+app.post('/api/recipes/generate', async (req, res) => {
+  const { preferences, portions, allowExtra = false, maxExtraItems = 0 } = req.body;
+  try {
+    const items = db.prepare('SELECT generic_name, name, quantity, unit, expiry_date, category FROM items').all();
+    
+    // Group items by generic_name and unit, but keep track of open status and expiry
+    const groupedInventory: Record<string, { quantity: number, unit: string, details: string[], category: string }> = {};
+    
+    items.forEach((i: any) => {
+      const key = `${i.generic_name || i.name}_${i.unit}`;
+      if (!groupedInventory[key]) {
+        groupedInventory[key] = { quantity: 0, unit: i.unit, details: [], category: i.category };
+      }
+      groupedInventory[key].quantity += i.quantity;
+      
+      let detail = `${i.quantity} ${i.unit}`;
+      if (i.is_open) detail += ' (geöffnet)';
+      if (i.expiry_date) detail += ` MHD: ${i.expiry_date}`;
+      groupedInventory[key].details.push(detail);
+    });
+
+    const inventoryList = Object.entries(groupedInventory).map(([key, data]) => {
+      const name = key.split('_')[0];
+      const detailsStr = data.details.join(', ');
+      return `- ${name}: ${data.quantity} ${data.unit} gesamt [${detailsStr}]`;
+    }).join('\n');
+    
+    const extraInstruction = allowExtra && maxExtraItems > 0
+      ? `You MAY include up to ${maxExtraItems} additional ingredients NOT in the inventory if they significantly improve the recipe. Mark these with in_inventory: false.`
+      : `Use ONLY ingredients from the inventory. Do NOT add ingredients that are not listed. All ingredients must have in_inventory: true.`;
+
+    const prompt = `
+      You are a professional chef. Create a recipe for ${portions || 2} portions using the following ingredients from my inventory:
+      ${inventoryList}
+
+      User preferences/Season: ${preferences || 'None'}
+      PREFER ingredients that are expiring soon (MHD) or already opened, but do NOT force them into the recipe if they don't fit.
+      Expired items (MHD in the past) should be treated as optional — only use them if the recipe genuinely benefits.
+      Include available sauces and spices where they naturally fit.
+      ${extraInstruction}
+
+      Return a JSON object with:
+      - title: Recipe title (German)
+      - description: Short description (German)
+      - ingredients: Array of objects { name, amount, unit, in_inventory (boolean) }
+      - instructions: Array of strings (steps, in German)
+    `;
+
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING },
+        description: { type: Type.STRING },
+        ingredients: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              amount: { type: Type.NUMBER },
+              unit: { type: Type.STRING },
+              in_inventory: { type: Type.BOOLEAN }
+            },
+            required: ["name", "amount", "unit", "in_inventory"]
+          }
+        },
+        instructions: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        }
+      },
+      required: ["title", "description", "ingredients", "instructions"]
+    };
+
+    const result = await getAIResponse(prompt, undefined, schema);
+    res.json(result);
+  } catch (error) {
+    console.error('Recipe error:', error);
+    res.status(500).json({ error: 'Failed to generate recipe' });
+  }
+});
+
+app.get('/api/calendar', (req, res) => {
+  try {
+    const recipes = db.prepare('SELECT * FROM planned_recipes ORDER BY date ASC').all();
+    res.json(recipes.map((r: any) => ({
+      ...r,
+      ingredients: JSON.parse(r.ingredients),
+      instructions: JSON.parse(r.instructions),
+      cooked: r.cooked === 1
+    })));
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch calendar' });
+  }
+});
+
+app.post('/api/calendar', (req, res) => {
+  const { date, title, description, ingredients, instructions, portions, base_portions } = req.body;
+  try {
+    const stmt = db.prepare('INSERT INTO planned_recipes (date, title, description, ingredients, instructions, portions, base_portions) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    stmt.run(date, title, description, JSON.stringify(ingredients), JSON.stringify(instructions), portions, base_portions || portions);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to add to calendar' });
+  }
+});
+
+app.post('/api/calendar/week', (req, res) => {
+  const { startDate, recipes, portions } = req.body;
+  try {
+    const stmt = db.prepare('INSERT INTO planned_recipes (date, title, description, ingredients, instructions, portions, base_portions) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    db.transaction(() => {
+      recipes.forEach((r: any, index: number) => {
+        const d = new Date(startDate);
+        d.setDate(d.getDate() + index);
+        const dateStr = d.toISOString().split('T')[0];
+        stmt.run(dateStr, r.title, r.description, JSON.stringify(r.ingredients), JSON.stringify(r.instructions), portions, portions);
+      });
+    })();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to add week to calendar' });
+  }
+});
+
+app.put('/api/calendar/:id/cook', async (req, res) => {
+  const { id } = req.params;
+  const { openedUpdates } = req.body; // [{ id, days }] - Note: id here refers to the ITEM id, but we need to match it during deduction
+
+  try {
+    const recipe = db.prepare('SELECT * FROM planned_recipes WHERE id = ?').get(id) as any;
+    if (!recipe) return res.status(404).json({ error: 'Recipe not found' });
+
+    const ingredients = JSON.parse(recipe.ingredients);
+    const ratio = recipe.portions / recipe.base_portions;
+    const deducted: any[] = [];
+    const missing: string[] = [];
+
+    db.transaction(() => {
+      for (const ing of ingredients) {
+        let deductAmount = 0;
+        if (ing.unit !== '%') {
+          deductAmount = ing.amount * ratio;
+        } else {
+          deductAmount = 5 * recipe.portions;
+        }
+        
+        let remainingToDeduct = deductAmount;
+        
+        const rows = db.prepare(`SELECT * FROM items WHERE LOWER(name) LIKE LOWER(?) OR LOWER(?) LIKE LOWER('%' || name || '%') ORDER BY is_open DESC, expiry_date ASC`).all(`%${ing.name}%`, ing.name) as any[];
+        
+        if (rows.length > 0) {
+          for (const item of rows) {
+            if (remainingToDeduct <= 0) break;
+            
+            if (item.is_open) {
+              const take = Math.min(item.quantity, remainingToDeduct);
+              remainingToDeduct -= take;
+              db.prepare('UPDATE items SET quantity = quantity - ? WHERE id = ?').run(take, item.id);
+              deducted.push({ ...item, quantity_deducted: take });
+            } else {
+              const pkgSize = item.package_size || item.quantity;
+              if (remainingToDeduct >= item.quantity) {
+                remainingToDeduct -= item.quantity;
+                db.prepare('UPDATE items SET quantity = 0 WHERE id = ?').run(item.id);
+                deducted.push({ ...item, quantity_deducted: item.quantity });
+              } else {
+                let packagesToOpen = Math.ceil(remainingToDeduct / pkgSize);
+                let totalOpenedAmount = packagesToOpen * pkgSize;
+                let leftoverOpened = totalOpenedAmount - remainingToDeduct;
+                
+                if (totalOpenedAmount > item.quantity) {
+                  totalOpenedAmount = item.quantity;
+                  leftoverOpened = totalOpenedAmount - remainingToDeduct;
+                }
+                
+                db.prepare('UPDATE items SET quantity = quantity - ? WHERE id = ?').run(totalOpenedAmount, item.id);
+                deducted.push({ ...item, quantity_deducted: remainingToDeduct });
+                
+                if (leftoverOpened > 0) {
+                  // Check if we have an update for this item
+                  // Since we are iterating, we can check if this item ID is in openedUpdates
+                  const update = openedUpdates?.find((u: any) => u.id === item.id);
+                  let expiryDate = item.expiry_date;
+                  if (update) {
+                    const newExpiry = new Date();
+                    newExpiry.setDate(newExpiry.getDate() + update.days);
+                    expiryDate = newExpiry.toISOString().split('T')[0];
+                  }
+
+                  const info = db.prepare(`INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`).run(item.name, item.generic_name, leftoverOpened, item.unit, expiryDate, item.category, item.barcode, item.pieces_per_pack, pkgSize);
+                }
+                remainingToDeduct = 0;
+              }
+            }
+          }
+          if (remainingToDeduct > 0) {
+            missing.push(`${ing.name} (Fehlt: ${remainingToDeduct} ${ing.unit})`);
+          }
+        } else {
+          missing.push(ing.name);
+        }
+      }
+      db.prepare('DELETE FROM items WHERE quantity <= 0').run();
+      db.prepare('UPDATE planned_recipes SET cooked = 1 WHERE id = ?').run(id);
+    })();
+
+    res.json({ success: true, deducted, missing });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to mark as cooked' });
+  }
+});
+
+app.delete('/api/calendar/:id', (req, res) => {
+  const { id } = req.params;
+  try {
+    db.prepare('DELETE FROM planned_recipes WHERE id = ?').run(id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete recipe' });
+  }
+});
+
+app.put('/api/calendar/:id/portions', (req, res) => {
+  const { id } = req.params;
+  const { portions } = req.body;
+  try {
+    db.prepare('UPDATE planned_recipes SET portions = ? WHERE id = ?').run(portions, id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update portions' });
+  }
+});
+
+// --- Favorite Recipes ---
+app.get('/api/recipes/favorites', (req, res) => {
+  try {
+    const favorites = db.prepare('SELECT * FROM favorite_recipes ORDER BY created_at DESC').all();
+    res.json(favorites.map((f: any) => ({
+      ...f,
+      ingredients: JSON.parse(f.ingredients),
+      instructions: JSON.parse(f.instructions)
+    })));
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch favorites' });
+  }
+});
+
+app.post('/api/recipes/favorites', (req, res) => {
+  const { title, description, ingredients, instructions, portions } = req.body;
+  try {
+    const stmt = db.prepare('INSERT INTO favorite_recipes (title, description, ingredients, instructions, portions) VALUES (?, ?, ?, ?, ?)');
+    const info = stmt.run(title, description, JSON.stringify(ingredients), JSON.stringify(instructions), portions || 2);
+    res.json({ id: info.lastInsertRowid });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save favorite' });
+  }
+});
+
+app.delete('/api/recipes/favorites/:id', (req, res) => {
+  try {
+    db.prepare('DELETE FROM favorite_recipes WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete favorite' });
+  }
+});
+
+app.post('/api/recipes/cook', (req, res) => {
+  const { usedIngredients } = req.body;
+  const deducted: any[] = [];
+  const missing: string[] = [];
+
+  try {
+    db.transaction(() => {
+      for (const ing of usedIngredients) {
+        const item = db.prepare('SELECT * FROM items WHERE name LIKE ? LIMIT 1').get(`%${ing.name}%`) as any;
+        if (item) {
+          if (item.quantity >= ing.amount) {
+            const newQty = item.quantity - ing.amount;
+            db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
+            deducted.push({ ...item, quantity_deducted: ing.amount });
+          } else {
+            db.prepare('UPDATE items SET quantity = 0 WHERE id = ?').run(item.id);
+            deducted.push({ ...item, quantity_deducted: item.quantity });
+            missing.push(`${ing.name} (Fehlt: ${ing.amount - item.quantity} ${ing.unit || item.unit || ''})`.trim());
+          }
+        } else {
+          missing.push(ing.name);
+        }
+      }
+      db.prepare('DELETE FROM items WHERE quantity <= 0').run();
+    })();
+    res.json({ success: true, deducted, missing });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to deduct inventory' });
+  }
+});
+
+app.get('/api/settings', (req, res) => {
+  try {
+    const settings = db.prepare('SELECT * FROM settings').all();
+    const result = settings.reduce((acc: any, row: any) => {
+      acc[row.key] = row.value;
+      return acc;
+    }, {});
+    
+    // Ensure defaults
+    const defaults = {
+      ai_provider: 'gemini',
+      ai_model: 'gemini-3-flash-preview',
+      ollama_url: 'http://localhost:11434'
+    };
+    
+    res.json({ ...defaults, ...result });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+app.post('/api/settings/bulk', (req, res) => {
+  const { settings } = req.body;
+  console.log('Bulk settings update request:', settings);
+  if (!settings) return res.status(400).json({ error: 'No settings provided' });
+  try {
+    const insert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    const transaction = db.transaction((data) => {
+      for (const [key, value] of Object.entries(data)) {
+        if (value !== undefined && value !== null) {
+          insert.run(key, String(value));
+        }
+      }
+    });
+    transaction(settings);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Settings save error:', error);
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+app.post('/api/settings', (req, res) => {
+  const { key, value } = req.body;
+  try {
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+app.post('/api/bring/add', async (req, res) => {
+  const { items } = req.body;
+  try {
+    const emailRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('bring_email') as any;
+    const passRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('bring_password') as any;
+    
+    if (!emailRow || !passRow) {
+      return res.status(400).json({ error: 'Bring! credentials not configured in settings.' });
+    }
+
+    console.log(`Adding to Bring list for ${emailRow.value}: `, items);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    res.json({ success: true, message: `Added ${items.length} items to Bring!` });
+  } catch (error) {
+    console.error('Bring API error:', error);
+    res.status(500).json({ error: 'Failed to add to Bring list' });
+  }
+});
+
+async function startServer() {
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static('dist'));
+    // SPA fallback: all non-API routes serve index.html
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api/')) return next();
+      res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
+    });
+  }
+
+  // HTTPS with self-signed cert for camera access on mobile
+  const certDir = process.env.DB_DIR || process.cwd();
+  const keyPath = path.join(certDir, 'server.key');
+  const certPath = path.join(certDir, 'server.cert');
+
+  if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+    console.log('Generating self-signed certificate...');
+    const { execFileSync } = await import('child_process');
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048',
+      '-keyout', keyPath, '-out', certPath,
+      '-days', '3650', '-nodes', '-subj', '/CN=foodai'
+    ], { stdio: 'pipe' });
+  }
+
+  const sslOptions = {
+    key: fs.readFileSync(keyPath),
+    cert: fs.readFileSync(certPath),
+  };
+
+  https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on https://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer();

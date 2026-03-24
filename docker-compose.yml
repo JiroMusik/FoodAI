@@ -1,0 +1,15 @@
+services:
+  foodai:
+    build: .
+    container_name: foodai
+    restart: unless-stopped
+    ports:
+      - "3099:3000"
+    volumes:
+      - foodai-data:/app/data
+    environment:
+      - DB_DIR=/app/data
+      - NODE_ENV=production
+
+volumes:
+  foodai-data:

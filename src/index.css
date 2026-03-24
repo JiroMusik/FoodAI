@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* html5-qrcode: make camera fill container */
+#html5-barcode-scanner video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+#html5-barcode-scanner {
+  position: relative;
+  overflow: hidden;
+}
+/* Hide html5-qrcode's built-in scan region border (we have our own overlay) */
+#html5-barcode-scanner #qr-shaded-region {
+  display: none !important;
+}

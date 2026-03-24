@@ -1,0 +1,5 @@
+{
+  "name": "FoodTrack AI",
+  "description": "Intelligente Lebensmittelverwaltung mit Barcode-Scanner, Bring! Integration, KI-Rezeptgenerator und Mahlzeiten-Kalender.",
+  "requestFramePermissions": ["camera"]
+}
