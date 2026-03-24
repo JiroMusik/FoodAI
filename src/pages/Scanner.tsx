@@ -5,8 +5,10 @@ import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import Tesseract from 'tesseract.js';
+import { useTranslation } from 'react-i18next';
 
 export default function Scanner() {
+  const { t } = useTranslation();
   const webcamRef = useRef<Webcam>(null);
   const [image, setImage] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -97,7 +99,7 @@ export default function Scanner() {
         const data = await res.json();
         const quantity = data.pieces_per_pack || data.default_quantity || 1;
         setResult({ ...data, quantity, barcode });
-        
+
         // Check if item already exists in inventory
         const invRes = await fetch('/api/inventory');
         if (invRes.ok) {
@@ -108,9 +110,9 @@ export default function Scanner() {
           }
         }
 
-        toast.success('Produkt gefunden!');
+        toast.success(t('scanner.productFound'));
       } else {
-        toast.error('Barcode nicht gefunden. Mache ein Foto für die KI!');
+        toast.error(t('scanner.barcodeNotFound'));
         setIsScanning(true);
         isProcessingRef.current = false;
       }
@@ -142,12 +144,12 @@ export default function Scanner() {
     try {
       const { data: { text } } = await Tesseract.recognize(base64, 'deu');
       console.log("OCR Text:", text);
-      
+
       // Improved date patterns: DD.MM.YYYY, DD/MM/YY, DD MM 2024, etc.
       // Also handles common OCR misreadings (e.g., 'O' for '0')
       const cleanText = text.replace(/[Oo]/g, '0').replace(/[IilL]/g, '1');
       const dateMatch = cleanText.match(/(\d{1,2})[.\/\s\-](\d{1,2})[.\/\s\-](\d{2,4})/);
-      
+
       if (dateMatch) {
         let [_, day, month, year] = dateMatch;
         day = day.padStart(2, '0');
@@ -155,7 +157,7 @@ export default function Scanner() {
         if (year.length === 2) year = '20' + year;
         const dateStr = `${year}-${month}-${day}`;
         setResult((prev: any) => ({ ...prev, expiry_date: dateStr }));
-        toast.success(`MHD erkannt: ${day}.${month}.${year}`);
+        toast.success(t('scanner.mhdRecognized', { date: `${day}.${month}.${year}` }));
       } else {
         // Fallback to AI if local OCR fails
         console.log("Local OCR failed to find date, trying AI fallback...");
@@ -164,21 +166,21 @@ export default function Scanner() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ imageBase64: base64 })
         });
-        
+
         if (res.ok) {
           const data = await res.json();
           if (data.expiry_date) {
             setResult((prev: any) => ({ ...prev, expiry_date: data.expiry_date }));
-            toast.success(`MHD via KI erkannt: ${data.expiry_date}`);
+            toast.success(t('scanner.mhdRecognizedAi', { date: data.expiry_date }));
           } else {
-            toast.error('MHD nicht erkannt. Bitte manuell eintragen.');
+            toast.error(t('scanner.mhdNotRecognized'));
           }
         } else {
-          toast.error('Kein Datum gefunden. Bitte manuell eintragen.');
+          toast.error(t('scanner.noDateFound'));
         }
       }
     } catch (error) {
-      toast.error('Fehler bei der Texterkennung.');
+      toast.error(t('scanner.ocrError'));
     } finally {
       setAnalyzing(false);
     }
@@ -194,10 +196,10 @@ export default function Scanner() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: base64 })
       });
-      
+
       if (!res.ok) {
         const errorText = await res.text();
-        throw new Error(`Server-Fehler (${res.status}): ${errorText || 'Unbekannter Fehler'}`);
+        throw new Error(t('common.serverError', { status: res.status, message: errorText || t('common.unknownError') }));
       }
 
       const data = await res.json();
@@ -215,12 +217,12 @@ export default function Scanner() {
 
     } catch (error: any) {
       console.error('Scan error:', error);
-      toast.error(`Bildanalyse fehlgeschlagen: ${error.message}`);
+      toast.error(t('scanner.imageAnalysisFailed', { message: error.message }));
       setResult({
         name: '',
         quantity: 1,
-        unit: 'Stück',
-        category: 'Sonstiges',
+        unit: t('units.piece'),
+        category: t('categories.other'),
         expiry_date: null,
         barcode: lastDetectedBarcode
       });
@@ -239,10 +241,10 @@ export default function Scanner() {
         body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error('Save failed');
-      toast.success('Artikel gespeichert');
+      toast.success(t('scanner.itemSaved'));
       setSaved(true);
     } catch (error) {
-      toast.error('Fehler beim Speichern');
+      toast.error(t('common.errorSaving'));
     }
   };
 
@@ -255,9 +257,9 @@ export default function Scanner() {
         body: JSON.stringify({ ...result })
       });
       if (!res.ok) throw new Error('Save failed');
-      toast.success('Weitere Packung gespeichert');
+      toast.success(t('scanner.anotherPackageSaved'));
     } catch (error) {
-      toast.error('Fehler beim Speichern');
+      toast.error(t('common.errorSaving'));
     }
   };
 
@@ -296,7 +298,7 @@ export default function Scanner() {
               <div className="bg-black/40 backdrop-blur-md px-6 py-3 rounded-full flex items-center space-x-3 border border-white/10">
                 <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
                 <p className="text-white text-sm font-semibold tracking-wide">
-                  {isScanningMhd ? 'MHD fotografieren' : isPhotoMode ? 'KI-Erkennung' : 'Barcode-Scan aktiv'}
+                  {isScanningMhd ? t('scanner.mhdPhotograph') : isPhotoMode ? t('scanner.aiRecognition') : t('scanner.barcodeScanActive')}
                 </p>
               </div>
 
@@ -305,11 +307,11 @@ export default function Scanner() {
               <div className="flex flex-col items-center space-y-6 pointer-events-auto">
                 <div className="text-center space-y-2">
                   <p className="text-white font-medium">
-                    {isScanningMhd ? 'MHD im Rahmen platzieren' : isPhotoMode ? 'Produkt fotografieren' : 'Barcode im Rahmen platzieren'}
+                    {isScanningMhd ? t('scanner.placeMhdInFrame') : isPhotoMode ? t('scanner.photographProduct') : t('scanner.placeBarcodeInFrame')}
                   </p>
                 </div>
 
-                {/* Camera button — always visible */}
+                {/* Camera button -- always visible */}
                 <button
                   onClick={async () => {
                     if (isScanningMhd) {
@@ -353,15 +355,15 @@ export default function Scanner() {
 
                 {!isScanningMhd && (
                   <div className="flex flex-col items-center gap-2">
-                    <p className="text-white/50 text-xs">Foto-Button = KI-Erkennung</p>
+                    <p className="text-white/50 text-xs">{t('scanner.photoButtonHint')}</p>
                     <button
                       onClick={() => {
-                        const code = prompt('Barcode manuell eingeben:');
+                        const code = prompt(t('scanner.enterBarcodePrompt'));
                         if (code) handleBarcodeDetected(code);
                       }}
                       className="text-emerald-400 text-xs font-bold hover:text-emerald-300 underline"
                     >
-                      Barcode manuell eingeben
+                      {t('scanner.enterBarcodeManually')}
                     </button>
                   </div>
                 )}
@@ -388,18 +390,18 @@ export default function Scanner() {
                 <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mb-6 backdrop-blur-sm">
                   <Barcode size={40} className="text-white" />
                 </div>
-                <h3 className="text-2xl font-bold mb-2">Produkt erkannt</h3>
-                <p className="text-emerald-100 text-sm opacity-80">Daten wurden automatisch geladen</p>
+                <h3 className="text-2xl font-bold mb-2">{t('scanner.productRecognized')}</h3>
+                <p className="text-emerald-100 text-sm opacity-80">{t('scanner.dataLoadedAutomatically')}</p>
               </div>
             )}
-            <button 
+            <button
               onClick={retake}
               className="absolute top-6 left-6 w-12 h-12 bg-black/40 hover:bg-black/60 rounded-full flex items-center justify-center text-white backdrop-blur-md transition-colors"
             >
               <X size={24} />
             </button>
           </div>
-          
+
           <div className="flex-1 p-8 bg-white rounded-t-[40px] -mt-10 relative z-10 shadow-[0_-15px_40px_rgba(0,0,0,0.08)] overflow-y-auto">
             {analyzing ? (
               <div className="h-full flex flex-col items-center justify-center space-y-6">
@@ -407,12 +409,12 @@ export default function Scanner() {
                   <Loader2 className="animate-spin text-emerald-600" size={48} />
                   <div className="absolute inset-0 bg-emerald-100 rounded-full blur-xl opacity-20 animate-pulse"></div>
                 </div>
-                <p className="text-gray-500 font-semibold text-lg">Analysiere Produkt...</p>
+                <p className="text-gray-500 font-semibold text-lg">{t('scanner.analyzingProduct')}</p>
               </div>
             ) : result ? (
               <div className="space-y-8 pb-8">
                 <div className="flex items-center justify-between border-b border-gray-100 pb-4">
-                  <h2 className="text-2xl font-bold text-gray-900">Details</h2>
+                  <h2 className="text-2xl font-bold text-gray-900">{t('scanner.details')}</h2>
                   {result.barcode && (
                     <div className="flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
                       <Barcode size={14} className="text-gray-400" />
@@ -422,98 +424,98 @@ export default function Scanner() {
                     </div>
                   )}
                 </div>
-                
+
                 <div className="space-y-6">
                   <div className="group">
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">Produktname</label>
-                    <input 
-                      type="text" 
-                      value={result.name || ''} 
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">{t('scanner.productName')}</label>
+                    <input
+                      type="text"
+                      value={result.name || ''}
                       onChange={e => setResult({...result, name: e.target.value})}
                       className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold transition-colors"
-                      placeholder="z.B. Iglo Fischstäbchen"
+                      placeholder={t('scanner.productNamePlaceholder')}
                     />
-                    <p className="text-[10px] text-gray-400 mt-1 italic">Tipp: Identische Namen werden im Vorrat automatisch zusammengeführt.</p>
+                    <p className="text-[10px] text-gray-400 mt-1 italic">{t('scanner.productNameHint')}</p>
                   </div>
-                  
+
                   <div className="flex space-x-6">
                     <div className="flex-1 group">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">Menge</label>
-                      <input 
-                        type="number" 
-                        value={result.quantity || ''} 
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">{t('scanner.amount')}</label>
+                      <input
+                        type="number"
+                        value={result.quantity || ''}
                         onChange={e => setResult({...result, quantity: Number(e.target.value)})}
                         className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold transition-colors"
                       />
                     </div>
                     <div className="flex-1 group">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">Einheit</label>
-                      <select 
-                        value={result.unit || 'Stück'} 
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">{t('scanner.unit')}</label>
+                      <select
+                        value={result.unit || t('units.piece')}
                         onChange={e => setResult({...result, unit: e.target.value})}
                         className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold bg-transparent transition-colors"
                       >
-                        <option value="Stück">Stück</option>
-                        <option value="g">Gramm (g)</option>
-                        <option value="kg">Kilogramm (kg)</option>
-                        <option value="ml">Milliliter (ml)</option>
-                        <option value="l">Liter (l)</option>
-                        <option value="%">Füllstand (%)</option>
+                        <option value={t('units.piece')}>{t('units.piece')}</option>
+                        <option value="g">{t('units.gram')}</option>
+                        <option value="kg">{t('units.kilogram')}</option>
+                        <option value="ml">{t('units.milliliter')}</option>
+                        <option value="l">{t('units.liter')}</option>
+                        <option value="%">{t('units.fillLevel')}</option>
                       </select>
                     </div>
                   </div>
 
                   {result.unit === 'Packung' && (
                     <div className="group animate-in slide-in-from-top-2">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">Stück pro Packung (optional)</label>
-                      <input 
-                        type="number" 
-                        placeholder="z.B. 15"
-                        value={result.pieces_per_pack || ''} 
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">{t('scanner.piecesPerPack')}</label>
+                      <input
+                        type="number"
+                        placeholder={t('scanner.piecesPerPackPlaceholder')}
+                        value={result.pieces_per_pack || ''}
                         onChange={e => setResult({...result, pieces_per_pack: Number(e.target.value)})}
                         className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold transition-colors"
                       />
-                      <p className="text-[10px] text-gray-400 mt-1 italic">Hilft bei der genauen Bestandsführung von Einzelteilen.</p>
+                      <p className="text-[10px] text-gray-400 mt-1 italic">{t('scanner.piecesPerPackHint')}</p>
                     </div>
                   )}
 
                   <div className="group">
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">Kategorie</label>
-                    <select 
-                      value={result.category || 'Sonstiges'} 
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">{t('scanner.category')}</label>
+                    <select
+                      value={result.category || t('categories.other')}
                       onChange={e => setResult({...result, category: e.target.value})}
                       className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold bg-transparent transition-colors"
                     >
-                      <option value="Obst & Gemüse">Obst & Gemüse</option>
-                      <option value="Kühlregal">Kühlregal</option>
-                      <option value="Tiefkühl">Tiefkühl</option>
-                      <option value="Vorratsschrank">Vorratsschrank</option>
-                      <option value="Getränke">Getränke</option>
-                      <option value="Backwaren">Backwaren</option>
-                      <option value="Fleisch & Fisch">Fleisch & Fisch</option>
-                      <option value="Snacks & Süßigkeiten">Snacks & Süßigkeiten</option>
-                      <option value="Gewürze & Saucen">Gewürze & Saucen</option>
-                      <option value="Haushalt & Drogerie">Haushalt & Drogerie</option>
-                      <option value="Sonstiges">Sonstiges</option>
+                      <option value={t('categories.fruitsVegetables')}>{t('categories.fruitsVegetables')}</option>
+                      <option value={t('categories.refrigerated')}>{t('categories.refrigerated')}</option>
+                      <option value={t('categories.frozen')}>{t('categories.frozen')}</option>
+                      <option value={t('categories.pantry')}>{t('categories.pantry')}</option>
+                      <option value={t('categories.beverages')}>{t('categories.beverages')}</option>
+                      <option value={t('categories.bakery')}>{t('categories.bakery')}</option>
+                      <option value={t('categories.meatFish')}>{t('categories.meatFish')}</option>
+                      <option value={t('categories.snacksSweets')}>{t('categories.snacksSweets')}</option>
+                      <option value={t('categories.spicesSauces')}>{t('categories.spicesSauces')}</option>
+                      <option value={t('categories.householdDrugstore')}>{t('categories.householdDrugstore')}</option>
+                      <option value={t('categories.other')}>{t('categories.other')}</option>
                     </select>
                   </div>
 
                   <div className="group">
                     <div className="flex items-center justify-between mb-2">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest group-focus-within:text-emerald-500 transition-colors">Haltbarkeit</label>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest group-focus-within:text-emerald-500 transition-colors">{t('scanner.shelfLife')}</label>
                       {!result.expiry_date && (
-                        <button 
+                        <button
                           onClick={() => setIsScanningMhd(true)}
                           className="flex items-center space-x-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg hover:bg-emerald-100 transition-colors"
                         >
                           <ScanText size={14} />
-                          <span>MHD scannen</span>
+                          <span>{t('scanner.scanMhd')}</span>
                         </button>
                       )}
                     </div>
-                    <input 
-                      type="date" 
-                      value={result.expiry_date || ''} 
+                    <input
+                      type="date"
+                      value={result.expiry_date || ''}
                       onChange={e => setResult({...result, expiry_date: e.target.value})}
                       className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold transition-colors"
                     />
@@ -527,20 +529,20 @@ export default function Scanner() {
                       className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
                     >
                       <Plus size={20} />
-                      <span>Gleiche Packung nochmal</span>
+                      <span>{t('scanner.samePackageAgain')}</span>
                     </button>
                     <button
                       onClick={retake}
                       className="w-full py-4 bg-gray-100 text-gray-700 rounded-2xl font-bold flex items-center justify-center space-x-2 hover:bg-gray-200 transition-colors"
                     >
                       <Camera size={20} />
-                      <span>Neuen Artikel scannen</span>
+                      <span>{t('scanner.scanNewItem')}</span>
                     </button>
                     <button
                       onClick={() => navigate('/inventory')}
                       className="w-full py-3 text-emerald-600 font-bold text-sm hover:underline"
                     >
-                      Zum Vorrat →
+                      {t('scanner.goToInventory')}
                     </button>
                   </div>
                 ) : (
@@ -550,14 +552,14 @@ export default function Scanner() {
                       className="flex-1 py-5 bg-gray-50 text-gray-600 rounded-2xl font-bold flex items-center justify-center space-x-2 hover:bg-gray-100 transition-colors"
                     >
                       <RefreshCw size={20} />
-                      <span>Abbrechen</span>
+                      <span>{t('common.cancel')}</span>
                     </button>
                     <button
                       onClick={() => handleSave()}
                       className="flex-1 py-5 bg-emerald-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
                     >
                       <Check size={20} />
-                      <span>Speichern</span>
+                      <span>{t('common.save')}</span>
                     </button>
                   </div>
                 )}
@@ -566,7 +568,7 @@ export default function Scanner() {
           </div>
         </div>
       )}
-      
+
       <style>{`
         @keyframes scan {
           0% { top: 0; }

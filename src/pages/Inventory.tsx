@@ -3,26 +3,47 @@ import { Search, Plus, Minus, Trash2, Calendar, Tag, Package, ChevronDown, Chevr
 import { toast } from 'react-hot-toast';
 import { InventoryItem } from '../types.ts';
 import { motion, AnimatePresence } from 'motion/react';
-
-const getExpiryStatus = (date: string | null) => {
-  if (!date) return 'ok';
-  const expiry = new Date(date);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diff = expiry.getTime() - today.getTime();
-  const days = Math.ceil(diff / (1000 * 3600 * 24));
-
-  if (days < 0) return 'expired';
-  if (days <= 3) return 'warning';
-  return 'ok';
-};
-
-const formatDate = (date: string | null) => {
-  if (!date) return '';
-  return new Date(date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' });
-};
+import { useTranslation } from 'react-i18next';
 
 export default function Inventory() {
+  const { t, i18n } = useTranslation();
+
+  const getExpiryStatus = (date: string | null) => {
+    if (!date) return 'ok';
+    const expiry = new Date(date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diff = expiry.getTime() - today.getTime();
+    const days = Math.ceil(diff / (1000 * 3600 * 24));
+
+    if (days < 0) return 'expired';
+    if (days <= 3) return 'warning';
+    return 'ok';
+  };
+
+  const dateLocale = t('common.dateLocale');
+
+  const formatDate = (date: string | null) => {
+    if (!date) return '';
+    return new Date(date).toLocaleDateString(dateLocale, { day: '2-digit', month: '2-digit', year: '2-digit' });
+  };
+
+  const categoryMap: Record<string, string> = {
+    'fruitsVegetables': t('categories.fruitsVegetables'),
+    'refrigerated': t('categories.refrigerated'),
+    'frozen': t('categories.frozen'),
+    'pantry': t('categories.pantry'),
+    'beverages': t('categories.beverages'),
+    'bakery': t('categories.bakery'),
+    'meatFish': t('categories.meatFish'),
+    'snacksSweets': t('categories.snacksSweets'),
+    'spicesSauces': t('categories.spicesSauces'),
+    'householdDrugstore': t('categories.householdDrugstore'),
+    'other': t('categories.other'),
+  };
+  const categoryKeys = Object.keys(categoryMap);
+  const categoryValues = Object.values(categoryMap);
+
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -47,7 +68,7 @@ export default function Inventory() {
         setExpandedCategories(categories);
       }
     } catch (error) {
-      toast.error('Fehler beim Laden des Inventars');
+      toast.error(t('inventory.errorLoadingInventory'));
     } finally {
       setLoading(false);
     }
@@ -55,7 +76,7 @@ export default function Inventory() {
 
   const handleSaveEdit = async (id: number) => {
     const amount = parseFloat(editAmount);
-    if (isNaN(amount) || amount < 0) { toast.error('Gültige Menge eingeben'); return; }
+    if (isNaN(amount) || amount < 0) { toast.error(t('inventory.enterValidAmount')); return; }
     const item = items.find(i => i.id === id);
     if (!item) return;
     try {
@@ -68,10 +89,10 @@ export default function Inventory() {
       });
       if (res.ok) {
         setItems(items.map(i => i.id === id ? { ...i, quantity: amount, unit: editUnit, expiry_date: editExpiry || null, package_size: finalPkgSize, category: editCategory } : i));
-        toast.success('Aktualisiert');
+        toast.success(t('common.updated'));
         setEditingId(null);
       }
-    } catch (e) { toast.error('Fehler beim Speichern'); }
+    } catch (e) { toast.error(t('common.errorSaving')); }
   };
 
   const handleQuickAdd = (delta: number) => {
@@ -85,25 +106,25 @@ export default function Inventory() {
       const res = await fetch(`/api/inventory/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...item, quantity: newQuantity })
+        body: JSON.stringify({ ...item, quantity: newQuantity, unit: editUnit, category: editCategory })
       });
       if (res.ok) {
-        setItems(items.map(i => i.id === id ? { ...i, quantity: newQuantity } : i));
-        toast.success('Aktualisiert');
+        setItems(items.map(i => i.id === id ? { ...i, quantity: newQuantity, unit: editUnit, category: editCategory } : i));
+        toast.success(t('common.updated'));
       }
-    } catch (error) { toast.error('Fehler'); }
+    } catch (error) { toast.error(t('common.error')); }
     setEditingId(null);
   };
 
   const deleteItem = async (id: number) => {
-    if (!window.confirm('Packung wirklich löschen?')) return;
+    if (!window.confirm(t('inventory.confirmDeletePackage'))) return;
     try {
       const res = await fetch(`/api/inventory/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setItems(items.filter(i => i.id !== id));
-        toast.success('Gelöscht');
+        toast.success(t('common.deleted'));
       }
-    } catch (error) { toast.error('Fehler beim Löschen'); }
+    } catch (error) { toast.error(t('common.errorDeleting')); }
   };
 
   const handleOpenItem = async (id: number) => {
@@ -116,9 +137,9 @@ export default function Inventory() {
       if (res.ok) {
         const updatedItem = await res.json();
         setItems(items.map(i => i.id === id ? updatedItem : i));
-        toast.success('Als geöffnet markiert');
+        toast.success(t('inventory.markedAsOpened'));
       }
-    } catch (error) { toast.error('Fehler'); }
+    } catch (error) { toast.error(t('common.error')); }
     finally { setOpeningId(null); }
   };
 
@@ -135,7 +156,7 @@ export default function Inventory() {
 
   // Group by category, then by generic_name within each category
   const groupedByCategory = filteredItems.reduce((acc, item) => {
-    const cat = item.category || 'Sonstiges';
+    const cat = item.category || t('categories.other');
     if (!acc[cat]) acc[cat] = {};
     const groupKey = item.generic_name || item.name;
     if (!acc[cat][groupKey]) acc[cat][groupKey] = [];
@@ -159,7 +180,7 @@ export default function Inventory() {
     return (
       <div className="h-full flex flex-col items-center justify-center space-y-4 bg-gray-50">
         <Loader2 className="animate-spin text-emerald-600" size={40} />
-        <p className="text-gray-500 font-medium">Lade Vorrat...</p>
+        <p className="text-gray-500 font-medium">{t('inventory.loadingInventory')}</p>
       </div>
     );
   }
@@ -168,19 +189,18 @@ export default function Inventory() {
     <div className="p-3 sm:p-6 max-w-3xl mx-auto pb-32">
       <header className="mb-6 sm:mb-10 pt-2 sm:pt-4">
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">Mein Vorrat</h1>
+          <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('inventory.title')}</h1>
           <div className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold">
-            {totalItems} Packungen
+            {t('inventory.packagesCount', { count: totalItems })}
           </div>
         </div>
-        <p className="text-gray-500 text-sm">Jede Packung einzeln getrackt.</p>
       </header>
 
       <div className="relative mb-6 sm:mb-10 group">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-emerald-500 transition-colors" size={20} />
         <input
           type="text"
-          placeholder="Suchen..."
+          placeholder={t('inventory.searchPlaceholder')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-full bg-white border border-gray-200 rounded-2xl py-3 sm:py-4 pl-12 pr-4 shadow-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-gray-700"
@@ -223,7 +243,7 @@ export default function Inventory() {
                         {packages.length > 1 && (
                           <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
                             <span className="text-sm font-bold text-gray-700">{groupName}</span>
-                            <span className="text-[10px] font-bold text-gray-400">{packages.length} Packungen</span>
+                            <span className="text-[10px] font-bold text-gray-400">{t('inventory.packagesCount', { count: packages.length })}</span>
                           </div>
                         )}
 
@@ -234,7 +254,7 @@ export default function Inventory() {
                               /* Edit mode */
                               <div className="bg-gray-50 rounded-xl p-3 space-y-3">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Bearbeiten</span>
+                                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{t('inventory.edit')}</span>
                                   <button onClick={() => setEditingId(null)} className="text-gray-400 hover:text-gray-600 p-1 bg-white rounded-full shadow-sm"><X size={14} /></button>
                                 </div>
 
@@ -243,7 +263,7 @@ export default function Inventory() {
                                   <div className="bg-white rounded-lg p-2 border border-gray-100">
                                     <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                                       <div className="flex items-center gap-1">
-                                        <span>Packung:</span>
+                                        <span>{t('inventory.packageLabel')}</span>
                                         <input type="number" value={editPackageSize} onChange={e => setEditPackageSize(e.target.value)}
                                           className="w-16 bg-gray-50 border border-gray-200 rounded px-1 py-0.5 text-xs font-bold text-gray-700 text-center" />
                                         <span>{editUnit}</span>
@@ -264,7 +284,7 @@ export default function Inventory() {
                                     {[100, 75, 50, 25, 0].map(pct => (
                                       <button key={pct} onClick={() => { setEditAmount(pct.toString()); handleSetQuantity(item.id, pct); }}
                                         className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${item.quantity === pct ? 'bg-emerald-600 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>
-                                        {pct === 0 ? 'Leer' : `${pct}%`}
+                                        {pct === 0 ? t('common.empty') : `${pct}%`}
                                       </button>
                                     ))}
                                   </div>
@@ -273,10 +293,9 @@ export default function Inventory() {
                                     <div className="flex items-center gap-2">
                                       <input type="number" value={editAmount} onChange={e => setEditAmount(e.target.value)}
                                         className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2 text-xl font-black text-gray-800 focus:ring-2 focus:ring-emerald-500 outline-none" autoFocus />
-                                      <span className="text-sm font-bold text-gray-500 px-2">{editUnit}</span>
                                       <select value={editUnit} onChange={(e) => setEditUnit(e.target.value)}
-                                        className="bg-white border border-gray-200 rounded-xl px-2 py-2 text-xs font-bold text-gray-400">
-                                        {['Stück', 'g', 'kg', 'ml', 'l', '%'].map(u => <option key={u} value={u}>{u}</option>)}
+                                        className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-600">
+                                        {[t('units.piece'), 'g', 'kg', 'ml', 'l', '%'].map(u => <option key={u} value={u}>{u}</option>)}
                                       </select>
                                     </div>
 
@@ -289,7 +308,7 @@ export default function Inventory() {
                                         <button onClick={() => handleQuickAdd(100)} className="flex-1 py-1.5 bg-white border rounded-lg text-xs font-bold text-emerald-600">+100</button>
                                       </div>
                                     )}
-                                    {editUnit === 'Stück' && (
+                                    {editUnit === t('units.piece') && (
                                       <div className="flex flex-wrap gap-2">
                                         <button onClick={() => handleQuickAdd(-1)} className="flex-1 py-1.5 bg-white border rounded-lg text-xs font-bold text-gray-600">-1</button>
                                         <button onClick={() => handleQuickAdd(-5)} className="flex-1 py-1.5 bg-white border rounded-lg text-xs font-bold text-gray-600">-5</button>
@@ -300,15 +319,15 @@ export default function Inventory() {
 
                                     <div className="flex gap-2">
                                       <div className="flex-1">
-                                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">MHD</label>
+                                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">{t('inventory.expiryLabel')}</label>
                                         <input type="date" value={editExpiry} onChange={e => setEditExpiry(e.target.value)}
                                           className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-800 focus:ring-2 focus:ring-emerald-500 outline-none" />
                                       </div>
                                       <div className="flex-1">
-                                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Kategorie</label>
+                                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">{t('inventory.categoryLabel')}</label>
                                         <select value={editCategory} onChange={e => setEditCategory(e.target.value)}
                                           className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-800 focus:ring-2 focus:ring-emerald-500 outline-none">
-                                          {['Obst & Gemüse','Kühlregal','Tiefkühl','Vorratsschrank','Getränke','Backwaren','Fleisch & Fisch','Snacks & Süßigkeiten','Gewürze & Saucen','Haushalt & Drogerie','Sonstiges'].map(c =>
+                                          {categoryValues.map(c =>
                                             <option key={c} value={c}>{c}</option>
                                           )}
                                         </select>
@@ -316,7 +335,7 @@ export default function Inventory() {
                                     </div>
 
                                     <div className="flex gap-2">
-                                      <button onClick={() => handleSaveEdit(item.id)} className="flex-1 bg-emerald-600 text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-2"><Check size={16} /> Speichern</button>
+                                      <button onClick={() => handleSaveEdit(item.id)} className="flex-1 bg-emerald-600 text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-2"><Check size={16} /> {t('common.save')}</button>
                                       <button onClick={() => deleteItem(item.id)} className="px-4 bg-red-50 text-red-600 rounded-xl flex items-center justify-center"><Trash2 size={18} /></button>
                                     </div>
                                   </>
@@ -329,15 +348,15 @@ export default function Inventory() {
                                   <div className="flex items-center gap-2 flex-wrap">
                                     {packages.length <= 1 && <h3 className="font-bold text-gray-900 text-base leading-tight">{item.name}</h3>}
                                     {item.is_open ? (
-                                      <span className="bg-blue-50 text-blue-600 text-[10px] px-2 py-0.5 rounded-md font-bold shrink-0">Offen</span>
+                                      <span className="bg-blue-50 text-blue-600 text-[10px] px-2 py-0.5 rounded-md font-bold shrink-0">{t('common.open')}</span>
                                     ) : (
-                                      <span className="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-md font-bold shrink-0">Zu</span>
+                                      <span className="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-md font-bold shrink-0">{t('common.closed')}</span>
                                     )}
                                     {getExpiryStatus(item.expiry_date) === 'expired' && (
-                                      <span className="bg-red-50 text-red-600 text-[10px] px-2 py-0.5 rounded-md font-black shrink-0">Abgelaufen</span>
+                                      <span className="bg-red-50 text-red-600 text-[10px] px-2 py-0.5 rounded-md font-black shrink-0">{t('common.expired')}</span>
                                     )}
                                     {getExpiryStatus(item.expiry_date) === 'warning' && (
-                                      <span className="bg-orange-50 text-orange-600 text-[10px] px-2 py-0.5 rounded-md font-black shrink-0">Bald fällig</span>
+                                      <span className="bg-orange-50 text-orange-600 text-[10px] px-2 py-0.5 rounded-md font-black shrink-0">{t('common.expiringSoon')}</span>
                                     )}
                                   </div>
                                   <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
@@ -360,11 +379,12 @@ export default function Inventory() {
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-1 shrink-0 ml-2">
+                                <div className="flex items-center gap-2 shrink-0 ml-2">
                                   {!item.is_open && item.quantity > 0 && (
                                     <button onClick={() => handleOpenItem(item.id)} disabled={openingId === item.id}
-                                      className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all" title="Öffnen">
-                                      {openingId === item.id ? <Loader2 size={16} className="animate-spin" /> : <PackageOpen size={16} />}
+                                      className="flex flex-col items-center gap-0.5 p-1.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all">
+                                      {openingId === item.id ? <Loader2 size={20} className="animate-spin" /> : <PackageOpen size={20} />}
+                                      <span className="text-[9px] font-bold">{t('inventory.openTooltip')}</span>
                                     </button>
                                   )}
                                   <button onClick={() => {
@@ -374,12 +394,14 @@ export default function Inventory() {
                                     setEditExpiry(item.expiry_date || '');
                                     setEditPackageSize((item.package_size || item.quantity).toString());
                                     setEditCategory(item.category);
-                                  }} className="p-2 text-gray-300 hover:text-emerald-500 hover:bg-emerald-50 rounded-xl transition-all" title="Bearbeiten">
-                                    <Package size={16} />
+                                  }} className="flex flex-col items-center gap-0.5 p-1.5 text-emerald-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all">
+                                    <Package size={20} />
+                                    <span className="text-[9px] font-bold">{t('inventory.editTooltip')}</span>
                                   </button>
                                   <button onClick={() => deleteItem(item.id)}
-                                    className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all" title="Löschen">
-                                    <Trash2 size={16} />
+                                    className="flex flex-col items-center gap-0.5 p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all">
+                                    <Trash2 size={20} />
+                                    <span className="text-[9px] font-bold">{t('inventory.deleteTooltip')}</span>
                                   </button>
                                 </div>
                               </div>
@@ -400,8 +422,8 @@ export default function Inventory() {
             <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-6">
               <Package className="text-gray-200" size={40} />
             </div>
-            <p className="text-gray-500 font-bold text-lg mb-1">Dein Vorrat ist leer.</p>
-            <p className="text-gray-400 text-sm">Scanne Artikel, um sie hinzuzufügen.</p>
+            <p className="text-gray-500 font-bold text-lg mb-1">{t('inventory.emptyTitle')}</p>
+            <p className="text-gray-400 text-sm">{t('inventory.emptySubtitle')}</p>
           </div>
         )}
       </div>

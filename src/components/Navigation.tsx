@@ -1,14 +1,17 @@
 import { NavLink } from 'react-router-dom';
 import { List, ScanLine, CalendarDays, Home, ShoppingCart, ChefHat } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 export default function Navigation() {
+  const { t } = useTranslation();
+
   const navItems = [
-    { path: '/dashboard', icon: Home, label: 'Übersicht' },
-    { path: '/inventory', icon: List, label: 'Vorrat' },
-    { path: '/scanner', icon: ScanLine, label: 'Scan' },
-    { path: '/recipes', icon: ChefHat, label: 'Rezepte' },
-    { path: '/calendar', icon: CalendarDays, label: 'Kalender' },
-    { path: '/shopping-list', icon: ShoppingCart, label: 'Einkauf' },
+    { path: '/dashboard', icon: Home, label: t('nav.dashboard') },
+    { path: '/inventory', icon: List, label: t('nav.inventory') },
+    { path: '/scanner', icon: ScanLine, label: t('nav.scanner') },
+    { path: '/recipes', icon: ChefHat, label: t('nav.recipes') },
+    { path: '/calendar', icon: CalendarDays, label: t('nav.calendar') },
+    { path: '/shopping-list', icon: ShoppingCart, label: t('nav.shopping') },
   ];
 
   return (

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AlertCircle, Check, X, Calendar } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface OpenedItem {
   id: number;
@@ -16,11 +17,14 @@ interface OpenedItemsModalProps {
 }
 
 export default function OpenedItemsModal({ isOpen, items, onConfirm, onCancel }: OpenedItemsModalProps) {
+  const { t, i18n } = useTranslation();
   const [selectedItems, setSelectedItems] = useState<Record<number, boolean>>(
     items.reduce((acc, item) => ({ ...acc, [item.id]: true }), {})
   );
 
   if (!isOpen) return null;
+
+  const dateLocale = t('common.dateLocale');
 
   const handleConfirm = () => {
     const updates = items
@@ -46,20 +50,20 @@ export default function OpenedItemsModal({ isOpen, items, onConfirm, onCancel }:
             <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center text-orange-600">
               <AlertCircle size={24} />
             </div>
-            <h2 className="text-xl font-bold text-gray-900">Angebrochene Zutaten</h2>
+            <h2 className="text-xl font-bold text-gray-900">{t('openedItemsModal.title')}</h2>
           </div>
-          
+
           <p className="text-gray-600 mb-6">
-            Einige Zutaten sollten nach dem Öffnen zügig verbraucht werden. Sollen wir das MHD automatisch anpassen?
+            {t('openedItemsModal.description')}
           </p>
 
           <div className="space-y-3 mb-8">
             {items.map(item => {
               const newDate = new Date();
               newDate.setDate(newDate.getDate() + item.days_until_spoiled);
-              
+
               return (
-                <div 
+                <div
                   key={item.id}
                   onClick={() => toggleItem(item.id)}
                   className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${selectedItems[item.id] ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 hover:border-emerald-200'}`}
@@ -72,7 +76,7 @@ export default function OpenedItemsModal({ isOpen, items, onConfirm, onCancel }:
                       <p className="font-bold text-gray-900">{item.name}</p>
                       <p className="text-xs text-gray-500 flex items-center gap-1">
                         <Calendar size={10} />
-                        Neues MHD: {newDate.toLocaleDateString()} (in {item.days_until_spoiled} Tagen)
+                        {t('openedItemsModal.newExpiry', { date: newDate.toLocaleDateString(dateLocale), days: item.days_until_spoiled })}
                       </p>
                     </div>
                   </div>
@@ -86,13 +90,13 @@ export default function OpenedItemsModal({ isOpen, items, onConfirm, onCancel }:
               onClick={onCancel}
               className="flex-1 py-3 px-4 rounded-xl font-bold text-gray-600 hover:bg-gray-100 transition-colors"
             >
-              Überspringen
+              {t('openedItemsModal.skip')}
             </button>
             <button
               onClick={handleConfirm}
               className="flex-1 py-3 px-4 rounded-xl font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
             >
-              Anpassen & Speichern
+              {t('openedItemsModal.adjustAndSave')}
             </button>
           </div>
         </div>

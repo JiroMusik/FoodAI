@@ -1,118 +1,126 @@
-# FoodAI
+🌍 [English](README.md) | [Deutsch](README_DE.md) | [Français](README_FR.md) | [Español](README_ES.md) | [Italiano](README_IT.md)
 
-A self-hosted kitchen inventory manager with AI-powered barcode scanning, recipe generation, and meal planning. Built with React, Express, and SQLite.
+<div align="center">
+<img width="1200" height="475" alt="FoodAI Banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-## Features
+# 🍎 FoodAI
 
-- **Barcode Scanner** -- Scan EAN/UPC barcodes with your phone camera. Products are looked up via OpenFoodFacts and UPCItemDB, then cached locally.
-- **AI Product Recognition** -- Point the camera at any food item and let AI identify the product, category, quantity, and expiry date.
-- **Per-Package Inventory** -- Each physical package is tracked individually with open/closed status, fill level, and package size.
-- **Expiry (MHD) Scanning** -- OCR via Tesseract.js with AI fallback to read best-before dates from packaging.
-- **AI Recipe Generation** -- Generate single recipes or full weekly meal plans based on your current inventory, prioritizing items that expire soon.
-- **Extra Ingredients Toggle** -- Optionally allow the AI to suggest a limited number of ingredients you do not have.
-- **Favorite Recipes** -- Save and reuse recipes you like.
-- **Meal Calendar** -- Plan meals for specific dates, mark them as cooked, and automatically deduct ingredients from inventory.
-- **Smart Deduction** -- When cooking, the system opens packages as needed and creates "opened" inventory items with adjusted expiry dates (AI-estimated).
-- **Shopping List** -- Automatically calculates missing ingredients for upcoming planned meals.
-- **Free Cook Mode** -- Photograph your ingredients on the counter; AI matches them to inventory and suggests amounts.
-- **Bring! Integration** -- Send missing ingredients to the Bring! shopping list app (placeholder -- credentials configured in-app).
-- **Mirror Display** -- A standalone dark-themed `/mirror/today` endpoint showing today's recipe, suitable for embedding on a smart mirror or tablet.
-- **Multi-AI Provider Support** -- Switch between Gemini, OpenAI, Anthropic, DeepSeek, Moonshot, or Ollama (local) directly in the Settings page.
-- **PWA** -- Installable as a Progressive Web App on mobile devices.
+**Master your inventory. Discover your next meal.**
 
-## Screenshots
+FoodAI is a self-hosted, AI-first kitchen inventory manager. It combines barcode scanning, computer vision, and generative AI to eliminate the friction of kitchen management — turning your pantry into an interactive culinary assistant.
 
-<!-- Add screenshots here -->
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://www.paypal.com/paypalme/germanquestions)
 
-## Tech Stack
+---
+
+## ✨ Core Pillars
+
+### 📸 Zero-Friction Inventory
+Forget manual data entry. Use **Vision Scan** to identify products and automatically extract expiry dates (MHD) directly from packaging. Whether it's a barcode lookup or a photo, the AI handles the logging.
+
+### 👨‍🍳 Generative Culinary Intelligence
+FoodAI doesn't just list your food — it understands it. The **Generative Chef** analyzes your current stock and creates custom recipes and weekly meal plans tailored to what you have, prioritizing items nearing expiry.
+
+### 📱 Premium Mobile Experience (PWA)
+Built for the modern kitchen. Fully installable **Progressive Web App** with smooth animations (Framer Motion) and a mobile-first UI that feels native on any device.
+
+---
+
+## 🚀 Features
+
+- **Smart Dashboard** — Real-time overview of expiring items, opened packages, and today's planned meals
+- **AI Barcode & Image Recognition** — Scan EAN/UPC barcodes or photograph any product for instant identification
+- **Per-Package Inventory** — Each physical package tracked individually with open/closed status and fill level
+- **Expiry (MHD) Scanning** — OCR via Tesseract.js with AI fallback to read best-before dates
+- **AI Recipe Generation** — Single recipes or full weekly meal plans from your inventory
+- **Extra Ingredients Toggle** — Optionally allow AI to suggest items you don't have
+- **Favorite Recipes** — Save and reuse recipes without adding to calendar
+- **Meal Calendar** — Plan meals, mark as cooked, auto-deduct ingredients
+- **Smart Deduction** — Opens packages as needed, adjusts remaining amounts
+- **Shopping List** — Auto-calculates missing ingredients for planned meals
+- **Free Cook Mode** — Photograph ingredients on the counter, AI matches to inventory
+- **Bring! Integration** — Send missing ingredients to the Bring! shopping list app
+- **Mirror Display** — Dark-themed `/mirror/today` endpoint for smart mirror embedding
+- **Multi-Language** — German, English, Spanish (more via community contributions)
+- **Multi-AI Provider** — Switch providers in-app, no restart needed
+
+---
+
+## 🧠 AI Providers
+
+All configurable in the Settings page — API key, model selection, separate advisor model for cost optimization.
+
+| Provider | Example Models |
+|----------|---------------|
+| Google Gemini | gemini-2.0-flash, gemini-1.5-pro |
+| OpenAI | gpt-4o, gpt-4o-mini |
+| Anthropic | claude-sonnet-4-20250514, claude-3-haiku |
+| DeepSeek | deepseek-chat |
+| Moonshot (Kimi) | moonshot-v1-8k |
+| Ollama (local) | llama3, mistral, llava |
+
+---
+
+## 🛠️ Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 19, TypeScript, React Router v7, Tailwind CSS v4, Framer Motion |
+| Frontend | React 19, TypeScript, Tailwind CSS v4, Framer Motion |
 | Backend | Node.js, Express, TypeScript (tsx) |
 | Database | SQLite via better-sqlite3 |
 | Scanning | html5-qrcode, Tesseract.js |
 | AI SDKs | @google/genai, openai, @anthropic-ai/sdk |
-| Build | Vite, vite-plugin-pwa |
-| Icons | Lucide React |
-| Deployment | Docker, docker-compose |
+| Build | Vite 6, vite-plugin-pwa |
+| i18n | react-i18next |
+| Deployment | Docker (multi-arch: amd64 + arm64) |
 
-## AI Providers
+---
 
-All providers are configurable in the in-app Settings page. You can set the API key, select models, and pick separate models for the main AI (recipes, scanning) and the advisor AI (amount estimation, expiry checks).
+## 🚀 Quick Start
 
-| Provider | Example Models |
-|----------|---------------|
-| Google Gemini | gemini-3-flash-preview, gemini-1.5-pro |
-| OpenAI | gpt-4o, gpt-4o-mini |
-| Anthropic | claude-3-5-sonnet-latest, claude-3-haiku |
-| DeepSeek | deepseek-chat, deepseek-coder |
-| Moonshot (Kimi) | moonshot-v1-8k, moonshot-v1-128k |
-| Ollama (local) | llama3, mistral, llava (any model you have pulled) |
+### Docker (recommended)
 
-## Getting Started
+```bash
+# 1. Clone
+git clone https://github.com/JiroMusik/FoodAI.git
+cd FoodAI
 
-### Prerequisites
+# 2. Configure
+cp .env.example .env
 
-- Node.js 20+ (22 recommended)
-- An API key from at least one AI provider (Gemini free tier works)
+# 3. Run
+docker compose up -d
+```
+
+Open **https://localhost:3000** and configure your AI provider in Settings.
 
 ### Local Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Create your environment file
 cp .env.example .env.local
-# Edit .env.local and add your GEMINI_API_KEY (or configure other providers in-app)
-
-# Start the development server (Express + Vite HMR)
 npm run dev
 ```
 
-The app will be available at:
-- **https://localhost:3000** (HTTPS with auto-generated self-signed certificate -- required for camera access on mobile)
-- **http://localhost:3001** (HTTP for local embedding, e.g. smart mirror iframes)
+---
 
-> The self-signed certificate will trigger a browser warning on first visit. Accept it to proceed.
+## 🐳 Docker
 
-### Production Build
-
-```bash
-npm run build    # Builds the frontend into dist/
-npm start        # Starts the production server
-```
-
-## Docker Deployment
-
-A `Dockerfile` and `docker-compose.yml` are included for easy self-hosted deployment.
-
-```bash
-# Build the frontend first
-npm run build
-
-# Build and start with Docker Compose
-docker compose up -d
-```
-
-The `docker-compose.yml` exposes:
-- Port **3099** -> HTTPS (3000 inside container)
-- Port **3098** -> HTTP (3001 inside container)
-
-Data is persisted in the `foodai-data` Docker volume.
+Pre-built multi-arch images (amd64 + arm64) are published to GitHub Container Registry on every release.
 
 ```yaml
 services:
   foodai:
-    build: .
+    image: ghcr.io/jiromusik/foodai:latest
     container_name: foodai
     restart: unless-stopped
     ports:
-      - "3099:3000"
-      - "3098:3001"
+      - "3000:3000"
     volumes:
       - foodai-data:/app/data
+    env_file:
+      - .env
     environment:
       - DB_DIR=/app/data
       - NODE_ENV=production
@@ -121,44 +129,69 @@ volumes:
   foodai-data:
 ```
 
-## Environment Variables
+### HTTPS
+
+FoodAI requires HTTPS for camera access on mobile. A self-signed certificate is auto-generated on first start. Accept the browser warning once, or mount your own certificates:
+
+```yaml
+volumes:
+  - ./certs/cert.pem:/app/data/server.cert:ro
+  - ./certs/key.pem:/app/data/server.key:ro
+```
+
+---
+
+## ⚙️ Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GEMINI_API_KEY` | No | -- | Default Gemini API key (can also be set in-app) |
+| `GEMINI_API_KEY` | No | — | Default Gemini API key (can also be set in-app) |
 | `DB_DIR` | No | `./` | Directory for SQLite database and SSL certificates |
-| `HTTP_PORT` | No | `3001` | Port for the plain HTTP server |
-| `NODE_ENV` | No | -- | Set to `production` to serve pre-built frontend |
+| `HTTP_PORT` | No | `3001` | Port for plain HTTP server (for iframe embedding) |
+| `NODE_ENV` | No | — | Set to `production` to serve pre-built frontend |
 
-## Project Structure
+---
+
+## 🌍 Contributing Translations
+
+FoodAI uses [react-i18next](https://react.i18next.com/). Translation files are in `src/i18n/locales/`.
+
+To add a new language:
+
+1. Copy `src/i18n/locales/en.json` to `src/i18n/locales/xx.json`
+2. Translate all values (keep keys in English)
+3. Add the import in `src/i18n/i18n.ts`
+4. Add the language option to `src/pages/Settings.tsx`
+5. Submit a PR!
+
+---
+
+## 📁 Project Structure
 
 ```
-server.ts          Express backend (API routes, AI integration, database)
+server.ts              Express backend (API, AI, database)
 src/
-  App.tsx          React router configuration
-  main.tsx         Entry point
-  types.ts         TypeScript interfaces
-  pages/
-    Dashboard.tsx  Overview (expiring items, open packages, today's meals)
-    Inventory.tsx  Per-package inventory management
-    Scanner.tsx    Barcode + AI camera scanner
-    Recipes.tsx    AI recipe generation (single + weekly)
-    Calendar.tsx   Meal planning calendar
-    FreeCook.tsx   Free-form cooking assistant
-    ShoppingList.tsx  Auto-generated shopping list
-    Settings.tsx   AI provider, model, and integration settings
-  components/
-    Navigation.tsx      Bottom navigation bar
-    RecipeCard.tsx       Recipe display component
-    OpenedItemsModal.tsx Modal for opened-item expiry adjustments
+  i18n/                Internationalization
+    locales/           de.json, en.json, es.json
+  pages/               Dashboard, Inventory, Scanner, Recipes, Calendar, FreeCook, Settings, ShoppingList
+  components/          Navigation, RecipeCard, OpenedItemsModal
+Dockerfile             Multi-stage Docker build
+docker-compose.yml     Production deployment
+.github/workflows/     CI/CD for multi-arch Docker images
 ```
 
-## Support
+---
 
-If you find this project useful, consider buying me a coffee:
+## 📄 License
 
-[![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://www.paypal.com/paypalme/germanquestions)
+Apache-2.0 — see [LICENSE](LICENSE)
 
-## License
+---
 
-Apache-2.0
+<div align="center">
+
+**Built with ❤️ and AI**
+
+[![PayPal](https://img.shields.io/badge/Buy_me_a_coffee-PayPal-blue?logo=paypal)](https://www.paypal.com/paypalme/germanquestions)
+
+</div>

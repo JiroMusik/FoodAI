@@ -3,8 +3,10 @@ import { ChefHat, Loader2, ShoppingCart, CheckCircle2, Calendar, Utensils, Chevr
 import { toast } from 'react-hot-toast';
 import { Recipe } from '../types.ts';
 import RecipeCard from '../components/RecipeCard';
+import { useTranslation } from 'react-i18next';
 
 export default function Recipes() {
+  const { t } = useTranslation();
   const [recipe, setRecipe] = useState<Recipe | null>(() => {
     const saved = localStorage.getItem('currentRecipe');
     return saved ? JSON.parse(saved) : null;
@@ -90,7 +92,7 @@ export default function Recipes() {
       const data = await res.json();
       setRecipe(data);
     } catch (error) {
-      toast.error('Fehler bei der Rezeptgenerierung');
+      toast.error(t('recipes.errorGeneratingRecipe'));
     } finally {
       setLoading(false);
     }
@@ -110,9 +112,9 @@ export default function Recipes() {
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setWeeklyPlan(data.plan);
-      toast.success('Wochenplan generiert');
+      toast.success(t('recipes.weeklyPlanGenerated'));
     } catch (error) {
-      toast.error('Fehler bei der Wochenplangenerierung');
+      toast.error(t('recipes.errorGeneratingWeeklyPlan'));
     } finally {
       setLoading(false);
     }
@@ -128,9 +130,9 @@ export default function Recipes() {
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setCookedResult(data);
-      toast.success('Guten Appetit! Bestand aktualisiert.');
+      toast.success(t('recipes.enjoyMealInventoryUpdated'));
     } catch (error) {
-      toast.error('Fehler beim Aktualisieren des Bestands');
+      toast.error(t('recipes.errorUpdatingInventory'));
     }
   };
 
@@ -142,16 +144,16 @@ export default function Recipes() {
         body: JSON.stringify({ items })
       });
       if (!res.ok) throw new Error('Failed');
-      toast.success('Zu Bring! hinzugefügt');
+      toast.success(t('recipes.addedToBring'));
     } catch (error) {
-      toast.error('Fehler beim Hinzufügen zu Bring!');
+      toast.error(t('recipes.errorAddingToBring'));
     }
   };
 
   const addToBringFromRecipe = async (targetRecipe: Recipe) => {
     const missingItems = targetRecipe.ingredients.filter(i => !i.in_inventory).map(i => i.name);
     if (missingItems.length === 0) {
-      toast.success('Alle Zutaten vorhanden!');
+      toast.success(t('recipes.allIngredientsAvailable'));
       return;
     }
     await addToBring(missingItems);
@@ -165,18 +167,18 @@ export default function Recipes() {
         body: JSON.stringify({ ...targetRecipe, portions })
       });
       if (res.ok) {
-        toast.success('Als Favorit gespeichert!');
+        toast.success(t('recipes.savedAsFavorite'));
         fetchFavorites();
       }
-    } catch (e) { toast.error('Fehler beim Speichern'); }
+    } catch (e) { toast.error(t('common.errorSaving')); }
   };
 
   const deleteFavorite = async (id: number) => {
     try {
       await fetch(`/api/recipes/favorites/${id}`, { method: 'DELETE' });
       setFavorites(favorites.filter(f => f.id !== id));
-      toast.success('Favorit entfernt');
-    } catch (e) { toast.error('Fehler'); }
+      toast.success(t('recipes.favoriteRemoved'));
+    } catch (e) { toast.error(t('common.error')); }
   };
 
   const addToCalendarSingle = async () => {
@@ -196,11 +198,11 @@ export default function Recipes() {
         })
       });
       if (res.ok) {
-        toast.success('Zum Kalender hinzugefügt');
+        toast.success(t('recipes.addedToCalendar'));
         setRecipe(null);
       }
     } catch (e) {
-      toast.error('Fehler beim Speichern');
+      toast.error(t('common.errorSaving'));
     }
   };
 
@@ -217,19 +219,18 @@ export default function Recipes() {
         })
       });
       if (res.ok) {
-        toast.success('Woche im Kalender gespeichert');
+        toast.success(t('recipes.weekSavedToCalendar'));
         setWeeklyPlan([]);
       }
     } catch (e) {
-      toast.error('Fehler beim Speichern');
+      toast.error(t('common.errorSaving'));
     }
   };
 
   return (
     <div className="p-4 max-w-3xl mx-auto pb-24">
       <header className="mb-8 pt-4">
-        <h1 className="text-2xl font-bold tracking-tight">KI Rezepte</h1>
-        <p className="text-gray-500 text-sm">Lass dich inspirieren von dem, was du hast.</p>
+        <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('recipes.title')}</h1>
       </header>
 
       {!cookedResult && (
@@ -237,7 +238,7 @@ export default function Recipes() {
           <div className="space-y-4">
             <div className="flex space-x-4">
               <div className="flex-1">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Datum (Start)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t('recipes.dateStart')}</label>
                 <input
                   type="date"
                   value={targetDate}
@@ -246,7 +247,7 @@ export default function Recipes() {
                 />
               </div>
               <div className="w-32">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Portionen</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t('recipes.portionsLabel')}</label>
                 <input
                   type="number"
                   min="1"
@@ -257,18 +258,18 @@ export default function Recipes() {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Deine Wünsche (z.B. vegetarisch, schnell, asiatisch)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{t('recipes.preferencesLabel')}</label>
               <textarea
                 value={preferences}
                 onChange={e => setPreferences(e.target.value)}
                 className="w-full border border-gray-200 rounded-2xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none resize-none h-24"
-                placeholder="Was möchtest du heute essen?"
+                placeholder={t('recipes.preferencesPlaceholder')}
               />
             </div>
             <div className="flex items-center justify-between bg-gray-50 rounded-2xl p-4">
               <div>
-                <label className="text-sm font-medium text-gray-700">Zusätzliche Zutaten erlauben</label>
-                <p className="text-xs text-gray-400">KI darf fehlende Zutaten vorschlagen</p>
+                <label className="text-sm font-medium text-gray-700">{t('recipes.allowExtraIngredients')}</label>
+                <p className="text-xs text-gray-400">{t('recipes.allowExtraDescription')}</p>
               </div>
               <button
                 onClick={() => setAllowExtra(!allowExtra)}
@@ -280,7 +281,7 @@ export default function Recipes() {
             {allowExtra && (
               <div className="bg-gray-50 rounded-2xl p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium text-gray-700">Max. zusätzliche Zutaten</label>
+                  <label className="text-sm font-medium text-gray-700">{t('recipes.maxExtraIngredients')}</label>
                   <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-sm font-bold">{maxExtraItems}</span>
                 </div>
                 <input
@@ -300,7 +301,7 @@ export default function Recipes() {
                 className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-semibold flex items-center justify-center space-x-2 hover:bg-emerald-700 transition-colors disabled:opacity-50 shadow-lg shadow-emerald-100"
               >
                 {loading && mode === 'single' ? <Loader2 className="animate-spin" size={20} /> : <Utensils size={20} />}
-                <span>Einzelrezept</span>
+                <span>{t('recipes.singleRecipe')}</span>
               </button>
               <button
                 onClick={generateWeeklyPlan}
@@ -308,7 +309,7 @@ export default function Recipes() {
                 className="flex-1 bg-gray-900 text-white py-4 rounded-2xl font-semibold flex items-center justify-center space-x-2 hover:bg-gray-800 transition-colors disabled:opacity-50 shadow-lg shadow-gray-200"
               >
                 {loading && mode === 'weekly' ? <Loader2 className="animate-spin" size={20} /> : <Calendar size={20} />}
-                <span>Wochenplan</span>
+                <span>{t('recipes.weeklyPlan')}</span>
               </button>
             </div>
           </div>
@@ -318,7 +319,7 @@ export default function Recipes() {
       {loading && (
         <div className="flex flex-col items-center justify-center py-12 space-y-4">
           <Loader2 className="animate-spin text-emerald-600" size={48} />
-          <p className="text-gray-500 font-medium">KI erstellt deinen Plan...</p>
+          <p className="text-gray-500 font-medium">{t('recipes.aiCreatingPlan')}</p>
         </div>
       )}
 
@@ -336,14 +337,14 @@ export default function Recipes() {
               className="flex-1 bg-orange-50 text-orange-600 py-4 rounded-2xl font-bold flex items-center justify-center space-x-2 hover:bg-orange-100 transition-colors border border-orange-200"
             >
               <Heart size={20} />
-              <span>Favorit</span>
+              <span>{t('recipes.favorite')}</span>
             </button>
             <button
               onClick={addToCalendarSingle}
               className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-bold flex items-center justify-center space-x-2 hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-100"
             >
               <Calendar size={20} />
-              <span>In Kalender</span>
+              <span>{t('recipes.addToCalendar')}</span>
             </button>
           </div>
         </div>
@@ -354,7 +355,7 @@ export default function Recipes() {
         <div className="mt-8">
           <button onClick={() => setShowFavorites(!showFavorites)} className="flex items-center space-x-2 mb-4 group">
             <Star size={18} className="text-orange-500" />
-            <h2 className="text-lg font-bold text-gray-900">Favoriten</h2>
+            <h2 className="text-lg font-bold text-gray-900">{t('recipes.favorites')}</h2>
             <span className="bg-orange-100 text-orange-600 text-xs px-2 py-0.5 rounded-full font-bold">{favorites.length}</span>
             {showFavorites ? <ChevronDown size={18} className="text-gray-400" /> : <ChevronRight size={18} className="text-gray-400" />}
           </button>
@@ -368,8 +369,8 @@ export default function Recipes() {
                   </div>
                   <p className="text-sm text-gray-500 mb-3">{fav.description}</p>
                   <div className="flex space-x-2">
-                    <button onClick={() => { setRecipe(fav); setMode('single'); }} className="flex-1 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-sm font-bold hover:bg-emerald-100">Anzeigen</button>
-                    <button onClick={() => handleCook(fav)} className="flex-1 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-200">Kochen</button>
+                    <button onClick={() => { setRecipe(fav); setMode('single'); }} className="flex-1 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-sm font-bold hover:bg-emerald-100">{t('recipes.showFavorite')}</button>
+                    <button onClick={() => handleCook(fav)} className="flex-1 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-200">{t('recipes.cookFavorite')}</button>
                   </div>
                 </div>
               ))}
@@ -381,18 +382,18 @@ export default function Recipes() {
       {!loading && !cookedResult && mode === 'weekly' && weeklyPlan.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between px-2">
-            <h2 className="text-xl font-bold">Dein Wochenplan</h2>
+            <h2 className="text-xl font-bold">{t('recipes.yourWeeklyPlan')}</h2>
             <button
               onClick={addToCalendarWeekly}
               className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold flex items-center space-x-2 hover:bg-emerald-700 transition-colors shadow-sm"
             >
               <Calendar size={16} />
-              <span>Woche speichern</span>
+              <span>{t('recipes.saveWeek')}</span>
             </button>
           </div>
           {weeklyPlan.map((dayRecipe, idx) => (
             <div key={idx} className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
-              <button 
+              <button
                 onClick={() => setExpandedDay(expandedDay === idx ? null : idx)}
                 className="w-full flex items-center justify-between p-5 hover:bg-gray-50 transition-colors"
               >
@@ -407,13 +408,13 @@ export default function Recipes() {
                 </div>
                 {expandedDay === idx ? <ChevronDown size={20} className="text-gray-400" /> : <ChevronRight size={20} className="text-gray-400" />}
               </button>
-              
+
               {expandedDay === idx && (
                 <div className="p-5 border-t border-gray-50 bg-gray-50/30">
-                  <RecipeCard 
-                    recipe={dayRecipe} 
-                    onCook={() => handleCook(dayRecipe)} 
-                    onBring={() => addToBringFromRecipe(dayRecipe)} 
+                  <RecipeCard
+                    recipe={dayRecipe}
+                    onCook={() => handleCook(dayRecipe)}
+                    onBring={() => addToBringFromRecipe(dayRecipe)}
                     compact
                   />
                 </div>
@@ -428,19 +429,19 @@ export default function Recipes() {
           <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <CheckCircle2 size={40} className="text-emerald-600" />
           </div>
-          <h2 className="text-2xl font-bold text-gray-900">Guten Appetit!</h2>
+          <h2 className="text-2xl font-bold text-gray-900">{t('recipes.enjoyYourMeal')}</h2>
           <p className="text-gray-600">
-            Die Zutaten wurden aus deinem Vorrat abgezogen.
+            {t('recipes.ingredientsDeducted')}
           </p>
-          
+
           {cookedResult.missing.length > 0 && (
             <div className="mt-8 text-left bg-orange-50 p-6 rounded-2xl border border-orange-100">
               <h3 className="font-semibold text-orange-800 mb-2 flex items-center">
                 <ShoppingCart size={18} className="mr-2" />
-                Auf die Einkaufsliste?
+                {t('recipes.addToShoppingList')}
               </h3>
               <p className="text-sm text-orange-700 mb-4">
-                Folgende Zutaten sind nun leer oder fehlten:
+                {t('recipes.ingredientsEmptyOrMissing')}
               </p>
               <ul className="list-disc pl-5 mb-4 text-sm text-orange-800 space-y-1">
                 {cookedResult.missing.map((m: string, i: number) => (
@@ -451,7 +452,7 @@ export default function Recipes() {
                 onClick={() => addToBring(cookedResult.missing)}
                 className="w-full bg-orange-600 text-white py-3 rounded-xl font-medium shadow-sm hover:bg-orange-700 transition-colors"
               >
-                Zu Bring! hinzufügen
+                {t('recipes.addToBring')}
               </button>
             </div>
           )}
@@ -460,7 +461,7 @@ export default function Recipes() {
             onClick={() => setCookedResult(null)}
             className="w-full py-4 bg-gray-100 text-gray-700 rounded-xl font-semibold mt-4"
           >
-            Zurück
+            {t('common.back')}
           </button>
         </div>
       )}

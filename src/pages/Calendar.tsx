@@ -5,8 +5,10 @@ import { useNavigate } from 'react-router-dom';
 import { PlannedRecipe } from '../types.ts';
 import RecipeCard from '../components/RecipeCard';
 import OpenedItemsModal from '../components/OpenedItemsModal';
+import { useTranslation } from 'react-i18next';
 
 export default function Calendar() {
+  const { t, i18n } = useTranslation();
   const [recipes, setRecipes] = useState<PlannedRecipe[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -14,6 +16,8 @@ export default function Calendar() {
   const [openedItems, setOpenedItems] = useState<any[]>([]);
   const [pendingCookId, setPendingCookId] = useState<number | null>(null);
   const navigate = useNavigate();
+
+  const dateLocale = t('common.dateLocale');
 
   useEffect(() => {
     fetchCalendar();
@@ -27,7 +31,7 @@ export default function Calendar() {
         setRecipes(data);
       }
     } catch (error) {
-      toast.error('Fehler beim Laden des Kalenders');
+      toast.error(t('calendar.errorLoadingCalendar'));
     } finally {
       setLoading(false);
     }
@@ -35,21 +39,21 @@ export default function Calendar() {
 
   const performCook = async (id: number, openedUpdates: any[]) => {
     try {
-      const res = await fetch(`/api/calendar/${id}/cook`, { 
+      const res = await fetch(`/api/calendar/${id}/cook`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ openedUpdates })
       });
       if (res.ok) {
         const data = await res.json();
-        toast.success('Gekocht & abgebucht!');
+        toast.success(t('calendar.cookedAndDeducted'));
         if (data.missing?.length > 0) {
-          toast.error(`Fehlte: ${data.missing.join(', ')}`);
+          toast.error(t('calendar.wasMissing', { items: data.missing.join(', ') }));
         }
         fetchCalendar();
       }
     } catch (error) {
-      toast.error('Fehler beim Abbuchen');
+      toast.error(t('calendar.errorDeducting'));
     }
     setPendingCookId(null);
   };
@@ -62,7 +66,7 @@ export default function Calendar() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ recipeId: id })
       });
-      
+
       if (checkRes.ok) {
         const checkData = await checkRes.json();
         if (checkData.updates && checkData.updates.length > 0) {
@@ -90,15 +94,15 @@ export default function Calendar() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Rezept aus Kalender entfernen?')) return;
+    if (!confirm(t('calendar.confirmRemoveRecipe'))) return;
     try {
       const res = await fetch(`/api/calendar/${id}`, { method: 'DELETE' });
       if (res.ok) {
-        toast.success('Entfernt');
+        toast.success(t('common.removed'));
         fetchCalendar();
       }
     } catch (error) {
-      toast.error('Fehler beim Löschen');
+      toast.error(t('common.errorDeleting'));
     }
   };
 
@@ -114,7 +118,7 @@ export default function Calendar() {
         setRecipes(recipes.map(r => r.id === id ? { ...r, portions } : r));
       }
     } catch (error) {
-      toast.error('Fehler beim Aktualisieren');
+      toast.error(t('common.errorUpdating'));
     }
   };
 
@@ -128,7 +132,7 @@ export default function Calendar() {
 
   return (
     <div className="p-4 max-w-3xl mx-auto pb-24">
-      <OpenedItemsModal 
+      <OpenedItemsModal
         isOpen={showOpenedModal}
         items={openedItems}
         onConfirm={handleConfirmOpened}
@@ -139,16 +143,15 @@ export default function Calendar() {
       />
       <header className="mb-8 pt-4">
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-2xl font-bold tracking-tight">Mahlzeiten-Kalender</h1>
-          <button 
+          <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('calendar.title')}</h1>
+          <button
             onClick={() => navigate('/free-cook')}
             className="bg-emerald-100 text-emerald-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-emerald-200 transition-colors"
           >
             <Camera size={16} />
-            Freies Kochen
+            {t('calendar.freeCooking')}
           </button>
         </div>
-        <p className="text-gray-500 text-sm">Plane deine Rezepte und buche Zutaten ab.</p>
       </header>
 
       {loading ? (
@@ -160,22 +163,27 @@ export default function Calendar() {
           <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-6">
             <CalendarIcon className="text-gray-200" size={40} />
           </div>
-          <p className="text-gray-500 font-bold text-lg mb-1">Dein Kalender ist leer.</p>
-          <p className="text-gray-400 text-sm">Füge Rezepte aus dem Rezepte-Tab hinzu.</p>
+          <p className="text-gray-500 font-bold text-lg mb-1">{t('calendar.emptyTitle')}</p>
+          <p className="text-gray-400 text-sm">{t('calendar.emptySubtitle')}</p>
         </div>
       ) : (
         <div className="space-y-8">
           {sortedDates.map(date => (
             <div key={date} className="space-y-4">
               <h2 className="text-lg font-bold text-gray-900 border-b border-gray-200 pb-2">
-                {new Date(date).toLocaleDateString('de-DE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                {new Date(date).toLocaleDateString(dateLocale, {
+                  weekday: t('calendar.dateFormat.weekday') as 'long' | 'short' | 'narrow',
+                  year: t('calendar.dateFormat.year') as 'numeric' | '2-digit',
+                  month: t('calendar.dateFormat.month') as 'long' | 'short' | 'narrow' | 'numeric' | '2-digit',
+                  day: t('calendar.dateFormat.day') as 'numeric' | '2-digit'
+                })}
               </h2>
               <div className="space-y-4">
                 {groupedRecipes[date].map(recipe => (
                   <div key={recipe.id} className={`bg-white rounded-3xl shadow-sm border ${recipe.cooked ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-100'} overflow-hidden`}>
                     <div className="p-5 flex flex-col gap-4">
                       <div className="flex justify-between items-start">
-                        <div 
+                        <div
                           className="flex-1 cursor-pointer"
                           onClick={() => setExpandedId(expandedId === recipe.id ? null : recipe.id)}
                         >
@@ -185,7 +193,7 @@ export default function Calendar() {
                           <p className="text-sm text-gray-500 mt-1 line-clamp-2">{recipe.description}</p>
                         </div>
                         <div className="flex items-center gap-2 ml-4">
-                          <button 
+                          <button
                             onClick={() => handleDelete(recipe.id)}
                             className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
                           >
@@ -197,8 +205,8 @@ export default function Calendar() {
                       <div className="flex items-center justify-between pt-4 border-t border-gray-100">
                         <div className="flex items-center gap-2 bg-gray-50 rounded-xl p-1">
                           <Users size={16} className="text-gray-400 ml-2" />
-                          <input 
-                            type="number" 
+                          <input
+                            type="number"
                             min="1"
                             value={recipe.portions}
                             onChange={(e) => updatePortions(recipe.id, parseInt(e.target.value) || 1)}
@@ -208,16 +216,16 @@ export default function Calendar() {
                         </div>
 
                         {!recipe.cooked ? (
-                          <button 
+                          <button
                             onClick={() => handleCook(recipe.id)}
                             className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"
                           >
                             <CheckCircle2 size={18} />
-                            <span>Kochen & Abbuchen</span>
+                            <span>{t('calendar.cookAndDeduct')}</span>
                           </button>
                         ) : (
                           <span className="text-emerald-600 font-bold flex items-center gap-1 px-4 py-2">
-                            <CheckCircle2 size={18} /> Gekocht
+                            <CheckCircle2 size={18} /> {t('calendar.cooked')}
                           </span>
                         )}
                       </div>
@@ -225,10 +233,10 @@ export default function Calendar() {
 
                     {expandedId === recipe.id && (
                       <div className="p-5 border-t border-gray-100 bg-gray-50/50">
-                        <RecipeCard 
-                          recipe={recipe} 
-                          onCook={() => {}} 
-                          onBring={() => {}} 
+                        <RecipeCard
+                          recipe={recipe}
+                          onCook={() => {}}
+                          onBring={() => {}}
                           compact
                         />
                       </div>

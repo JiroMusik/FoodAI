@@ -4,6 +4,7 @@ import { Camera, X, Check, Loader2, RefreshCw, ChefHat, Sparkles, Minus, Plus } 
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import OpenedItemsModal from '../components/OpenedItemsModal';
+import { useTranslation } from 'react-i18next';
 
 interface DetectedIngredient {
   id: number;
@@ -15,6 +16,7 @@ interface DetectedIngredient {
 }
 
 export default function FreeCook() {
+  const { t } = useTranslation();
   const webcamRef = useRef<Webcam>(null);
   const [image, setImage] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -42,15 +44,15 @@ export default function FreeCook() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: base64 })
       });
-      
-      if (!res.ok) throw new Error('Analyse fehlgeschlagen');
-      
+
+      if (!res.ok) throw new Error(t('freecook.analysisFailed'));
+
       const data = await res.json();
-      
+
       // Fetch current inventory to get available amounts
       const invRes = await fetch('/api/inventory');
       const invData = await invRes.json();
-      
+
       const enrichedIngredients = data.ingredients.map((ing: any) => {
         const invItem = invData.find((i: any) => i.id === ing.id);
         return {
@@ -61,7 +63,7 @@ export default function FreeCook() {
 
       setIngredients(enrichedIngredients);
       if (enrichedIngredients.length === 0) {
-        toast.error('Keine Zutaten aus deinem Vorrat erkannt.');
+        toast.error(t('freecook.noIngredientsFromInventory'));
       }
     } catch (error: any) {
       toast.error(error.message);
@@ -80,11 +82,11 @@ export default function FreeCook() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ingredients, portions })
       });
-      if (!res.ok) throw new Error('Tipp fehlgeschlagen');
-      
+      if (!res.ok) throw new Error(t('freecook.tipFailed'));
+
       const data = await res.json();
       setAdvice(data.advice);
-      
+
       // Update amounts based on suggestion
       setIngredients(prev => prev.map(ing => {
         const suggestion = data.amounts.find((a: any) => a.id === ing.id);
@@ -93,16 +95,16 @@ export default function FreeCook() {
         }
         return ing;
       }));
-      toast.success('Mengen wurden basierend auf KI-Tipp angepasst!');
+      toast.success(t('freecook.amountsAdjustedByAi'));
     } catch (error) {
-      toast.error('Fehler beim Abrufen des Tipps');
+      toast.error(t('freecook.errorGettingTip'));
     } finally {
       setAskingAdvice(false);
     }
   };
 
   const updateAmount = (id: number, amount: number) => {
-    setIngredients(prev => prev.map(ing => 
+    setIngredients(prev => prev.map(ing =>
       ing.id === id ? { ...ing, estimated_deduction: Math.max(0, amount) } : ing
     ));
   };
@@ -115,14 +117,14 @@ export default function FreeCook() {
         body: JSON.stringify({ deductions, openedUpdates })
       });
 
-      if (!res.ok) throw new Error('Abzug fehlgeschlagen');
-      
+      if (!res.ok) throw new Error(t('freecook.deductionFailed'));
+
       const data = await res.json();
-      
-      toast.success('Zutaten erfolgreich abgezogen! Guten Appetit!');
+
+      toast.success(t('freecook.ingredientsDeductedSuccess'));
       navigate('/calendar');
     } catch (error) {
-      toast.error('Fehler beim Abziehen der Zutaten');
+      toast.error(t('freecook.errorDeductingIngredients'));
     }
   };
 
@@ -133,7 +135,7 @@ export default function FreeCook() {
     })).filter(d => d.amount > 0);
 
     if (deductions.length === 0) {
-      toast.error('Keine Mengen zum Abziehen ausgewählt.');
+      toast.error(t('freecook.noAmountsSelected'));
       return;
     }
 
@@ -144,7 +146,7 @@ export default function FreeCook() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deductions })
       });
-      
+
       if (checkRes.ok) {
         const checkData = await checkRes.json();
         if (checkData.updates && checkData.updates.length > 0) {
@@ -154,7 +156,7 @@ export default function FreeCook() {
             // Enrich with names
             const enrichedUpdates = riskyItems.map((u: any) => {
                const ing = ingredients.find(i => i.id === u.id);
-               return { ...u, name: ing?.name || 'Unbekannt' };
+               return { ...u, name: ing?.name || t('common.unknown') };
             });
             setOpenedItems(enrichedUpdates);
             setShowOpenedModal(true);
@@ -186,7 +188,7 @@ export default function FreeCook() {
 
   return (
     <div className="h-full flex flex-col bg-gray-50 overflow-hidden pb-20">
-      <OpenedItemsModal 
+      <OpenedItemsModal
         isOpen={showOpenedModal}
         items={openedItems}
         onConfirm={handleConfirmOpened}
@@ -204,7 +206,7 @@ export default function FreeCook() {
           <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center text-emerald-600">
             <ChefHat size={24} />
           </div>
-          <h1 className="text-xl font-bold text-gray-900">Freies Kochen</h1>
+          <h1 className="text-xl font-bold tracking-wider text-gray-900">{t('freecook.title')}</h1>
         </div>
         <button onClick={() => navigate(-1)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-full transition-colors">
           <X size={24} />
@@ -222,10 +224,10 @@ export default function FreeCook() {
           />
           <div className="absolute inset-0 flex flex-col items-center justify-between py-12 pointer-events-none">
             <div className="bg-black/40 backdrop-blur-md px-6 py-3 rounded-full flex items-center space-x-3 border border-white/10">
-              <p className="text-white text-sm font-semibold tracking-wide">Zutaten fotografieren</p>
+              <p className="text-white text-sm font-semibold tracking-wide">{t('freecook.photographIngredients')}</p>
             </div>
-            
-            <button 
+
+            <button
               onClick={capture}
               className="group relative w-20 h-20 flex items-center justify-center active:scale-90 transition-transform pointer-events-auto"
             >
@@ -242,16 +244,16 @@ export default function FreeCook() {
             <div className="absolute inset-0 border-4 border-emerald-200 rounded-full animate-ping opacity-20"></div>
             <Loader2 className="text-emerald-600 animate-spin" size={40} />
           </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Analysiere Zutaten...</h2>
-          <p className="text-gray-500">Die KI gleicht das Foto mit deinem Vorrat ab.</p>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">{t('freecook.analyzingIngredients')}</h2>
+          <p className="text-gray-500">{t('freecook.aiMatchingInventory')}</p>
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
           <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-gray-900">Erkannte Zutaten</h2>
+              <h2 className="text-lg font-bold text-gray-900">{t('freecook.recognizedIngredients')}</h2>
               <button onClick={retake} className="text-emerald-600 text-sm font-bold flex items-center gap-1 bg-emerald-50 px-3 py-1.5 rounded-lg">
-                <RefreshCw size={14} /> Neu scannen
+                <RefreshCw size={14} /> {t('freecook.rescan')}
               </button>
             </div>
 
@@ -262,30 +264,30 @@ export default function FreeCook() {
                     <div className="flex justify-between items-start mb-3">
                       <div>
                         <h3 className="font-bold text-gray-900">{ing.name}</h3>
-                        <p className="text-xs text-gray-500 mt-0.5">Verfügbar: {ing.available} {ing.unit}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{t('common.available', { amount: ing.available, unit: ing.unit })}</p>
                       </div>
                       <span className="text-[10px] bg-white border border-gray-200 px-2 py-1 rounded-md text-gray-500 italic max-w-[120px] text-right line-clamp-2">
                         {ing.reasoning}
                       </span>
                     </div>
-                    
+
                     <div className="flex items-center gap-3">
-                      <button 
+                      <button
                         onClick={() => updateAmount(ing.id, ing.estimated_deduction - (ing.unit === '%' ? 25 : 10))}
                         className="w-10 h-10 bg-white border border-gray-200 rounded-xl flex items-center justify-center text-gray-600 hover:bg-gray-50 active:scale-95"
                       >
                         <Minus size={18} />
                       </button>
                       <div className="flex-1 relative">
-                        <input 
-                          type="number" 
+                        <input
+                          type="number"
                           value={ing.estimated_deduction}
                           onChange={(e) => updateAmount(ing.id, Number(e.target.value))}
                           className="w-full bg-white border border-gray-200 rounded-xl py-2.5 text-center font-bold text-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                         />
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium text-sm">{ing.unit}</span>
                       </div>
-                      <button 
+                      <button
                         onClick={() => updateAmount(ing.id, ing.estimated_deduction + (ing.unit === '%' ? 25 : 10))}
                         className="w-10 h-10 bg-white border border-gray-200 rounded-xl flex items-center justify-center text-gray-600 hover:bg-gray-50 active:scale-95"
                       >
@@ -296,7 +298,7 @@ export default function FreeCook() {
                 ))}
               </div>
             ) : (
-              <p className="text-gray-500 text-center py-4">Keine Zutaten erkannt.</p>
+              <p className="text-gray-500 text-center py-4">{t('freecook.noIngredientsRecognized')}</p>
             )}
           </div>
 
@@ -305,44 +307,44 @@ export default function FreeCook() {
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2 text-indigo-900 font-bold">
                   <Sparkles size={20} className="text-indigo-500" />
-                  KI-Mengenberater
+                  {t('freecook.aiAmountAdvisor')}
                 </div>
                 <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-indigo-100">
-                  <span className="text-xs font-bold text-indigo-400">Personen:</span>
-                  <input 
-                    type="number" 
-                    value={portions} 
+                  <span className="text-xs font-bold text-indigo-400">{t('common.persons')}</span>
+                  <input
+                    type="number"
+                    value={portions}
                     onChange={e => setPortions(Number(e.target.value))}
                     className="w-8 text-center font-bold text-indigo-900 outline-none bg-transparent"
                     min="1"
                   />
                 </div>
               </div>
-              
+
               {advice && (
                 <div className="mb-4 p-3 bg-white rounded-xl text-sm text-indigo-800 border border-indigo-100">
                   {advice}
                 </div>
               )}
 
-              <button 
+              <button
                 onClick={askForAdvice}
                 disabled={askingAdvice}
                 className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-colors disabled:opacity-70"
               >
                 {askingAdvice ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
-                <span>Mengen-Tipp einholen</span>
+                <span>{t('freecook.getAmountTip')}</span>
               </button>
             </div>
           )}
 
           {ingredients.length > 0 && (
-            <button 
+            <button
               onClick={handleCook}
               className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold text-lg shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2"
             >
               <Check size={24} />
-              Kochen & Abziehen
+              {t('freecook.cookAndDeduct')}
             </button>
           )}
         </div>

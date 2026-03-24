@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ShoppingCart, Loader2, Send } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
 
 interface MissingIngredient {
   name: string;
@@ -9,6 +10,7 @@ interface MissingIngredient {
 }
 
 export default function ShoppingList() {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [missingItems, setMissingItems] = useState<MissingIngredient[]>([]);
   const [addingToBring, setAddingToBring] = useState(false);
@@ -25,7 +27,7 @@ export default function ShoppingList() {
         setMissingItems(data.missingIngredients || []);
       }
     } catch (error) {
-      toast.error('Fehler beim Laden der Einkaufsliste');
+      toast.error(t('shopping.errorLoadingShoppingList'));
     } finally {
       setLoading(false);
     }
@@ -41,15 +43,15 @@ export default function ShoppingList() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: itemsToAdd })
       });
-      
+
       if (res.ok) {
-        toast.success('Zur Bring! Liste hinzugefügt');
+        toast.success(t('shopping.addedToBringList'));
       } else {
         const data = await res.json();
-        toast.error(data.error || 'Fehler beim Senden an Bring!');
+        toast.error(data.error || t('shopping.errorSendingToBring'));
       }
     } catch (error) {
-      toast.error('Fehler beim Senden an Bring!');
+      toast.error(t('shopping.errorSendingToBring'));
     } finally {
       setAddingToBring(false);
     }
@@ -68,23 +70,23 @@ export default function ShoppingList() {
       <header className="flex justify-between items-center mb-6 pt-4">
         <div className="flex items-center gap-2 text-emerald-700">
           <ShoppingCart size={24} />
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Einkaufsliste</h1>
+          <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('shopping.title')}</h1>
         </div>
-        <button 
+        <button
           onClick={handleAddToBring}
           disabled={addingToBring || missingItems.length === 0}
           className="bg-[#E43C31] text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#c93229] transition-colors disabled:opacity-50"
         >
           {addingToBring ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-          Bring!
+          {t('shopping.sendToBring')}
         </button>
       </header>
 
       {missingItems.length === 0 ? (
         <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm text-center">
           <ShoppingCart size={48} className="mx-auto text-gray-300 mb-4" />
-          <h2 className="text-lg font-medium text-gray-900 mb-1">Alles da!</h2>
-          <p className="text-gray-500 text-sm">Für deine geplanten Mahlzeiten fehlen aktuell keine Zutaten.</p>
+          <h2 className="text-lg font-medium text-gray-900 mb-1">{t('shopping.allStocked')}</h2>
+          <p className="text-gray-500 text-sm">{t('shopping.noMissingIngredients')}</p>
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">

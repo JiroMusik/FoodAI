@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { Save, Cpu, Key, Globe } from 'lucide-react';
+import { Save, Cpu, Key, Globe, Languages } from 'lucide-react';
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 
 const INITIAL_PROVIDERS = [
   { id: 'gemini', name: 'Google Gemini', models: ['gemini-3-flash-preview', 'gemini-flash-latest', 'gemini-3.1-pro-preview'] },
@@ -13,6 +14,7 @@ const INITIAL_PROVIDERS = [
 ];
 
 export default function Settings() {
+  const { t, i18n } = useTranslation();
   const [providers, setProviders] = useState(INITIAL_PROVIDERS);
   const [settings, setSettings] = useState({
     bring_email: '',
@@ -41,7 +43,7 @@ export default function Settings() {
           }
           return p;
         }));
-        toast.success('Neueste KI-Modelle geladen', { icon: '🤖' });
+        toast.success(t('settings.latestModelsLoaded'), { icon: '🤖' });
       }
     } catch (error) {
       console.error('Failed to fetch models');
@@ -71,12 +73,16 @@ export default function Settings() {
         body: JSON.stringify({ settings })
       });
       if (!res.ok) throw new Error('Save failed');
-      toast.success('Einstellungen gespeichert');
+      toast.success(t('settings.settingsSaved'));
       // Re-fetch to ensure UI is in sync
       fetchSettings();
     } catch (error) {
-      toast.error('Fehler beim Speichern');
+      toast.error(t('common.errorSaving'));
     }
+  };
+
+  const changeLanguage = (lng: string) => {
+    i18n.changeLanguage(lng);
   };
 
   if (loading) return null;
@@ -86,28 +92,58 @@ export default function Settings() {
   return (
     <div className="p-4 max-w-3xl mx-auto pb-24">
       <header className="mb-8 pt-4">
-        <h1 className="text-2xl font-bold tracking-tight">Einstellungen</h1>
+        <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('settings.title')}</h1>
       </header>
 
       <div className="space-y-6">
+        {/* Language Selection */}
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
+          <h2 className="text-lg font-semibold mb-6 flex items-center">
+            <span className="bg-blue-100 text-blue-600 p-2 rounded-lg mr-3">
+              <Languages size={20} />
+            </span>
+            {t('settings.language')}
+          </h2>
+
+          <div className="flex gap-3">
+            {[
+              { code: 'de', label: t('settings.languageDE') },
+              { code: 'en', label: t('settings.languageEN') },
+              { code: 'es', label: t('settings.languageES') },
+            ].map(lang => (
+              <button
+                key={lang.code}
+                onClick={() => changeLanguage(lang.code)}
+                className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all ${
+                  i18n.language === lang.code
+                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-100'
+                    : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                }`}
+              >
+                {lang.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* AI Configuration */}
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
           <h2 className="text-lg font-semibold mb-6 flex items-center">
             <span className="bg-emerald-100 text-emerald-600 p-2 rounded-lg mr-3">
               <Cpu size={20} />
             </span>
-            KI Konfiguration
+            {t('settings.aiConfiguration')}
           </h2>
-          
+
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Anbieter</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.provider')}</label>
               <select
                 value={settings.ai_provider}
                 onChange={e => {
                   const provider = providers.find(p => p.id === e.target.value);
                   setSettings({
-                    ...settings, 
+                    ...settings,
                     ai_provider: e.target.value,
                     ai_model: provider?.models[0] || ''
                   });
@@ -121,7 +157,7 @@ export default function Settings() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Modell (Haupt-KI)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.mainModel')}</label>
               <select
                 value={settings.ai_model}
                 onChange={e => setSettings({...settings, ai_model: e.target.value})}
@@ -135,7 +171,7 @@ export default function Settings() {
               {settings.ai_provider === 'ollama' && (
                 <input
                   type="text"
-                  placeholder="Ollama Modell Name (z.B. llama3)"
+                  placeholder={t('scanner.ollamaModelPlaceholder')}
                   value={settings.ai_model}
                   onChange={e => setSettings({...settings, ai_model: e.target.value})}
                   className="mt-2 w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -144,7 +180,7 @@ export default function Settings() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Modell (Mengen-Berater / Günstig)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.advisorModel')}</label>
               <select
                 value={settings.advisor_model}
                 onChange={e => setSettings({...settings, advisor_model: e.target.value})}
@@ -155,20 +191,20 @@ export default function Settings() {
                 ))}
                 {settings.ai_provider === 'ollama' && <option value={settings.advisor_model}>Custom: {settings.advisor_model}</option>}
               </select>
-              <p className="text-xs text-gray-500 mt-1">Wird für einfache Aufgaben wie Mengen-Schätzungen verwendet, um Kosten zu sparen.</p>
+              <p className="text-xs text-gray-500 mt-1">{t('settings.advisorModelHint')}</p>
             </div>
 
             {settings.ai_provider !== 'ollama' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
-                  <Key size={14} className="mr-1" /> API Key
+                  <Key size={14} className="mr-1" /> {t('settings.apiKey')}
                 </label>
                 <input
                   type="password"
                   value={settings.ai_api_key}
                   onChange={e => setSettings({...settings, ai_api_key: e.target.value})}
                   className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
-                  placeholder={settings.ai_provider === 'gemini' ? 'Optional (Standard Key wird genutzt)' : 'Dein API Key'}
+                  placeholder={settings.ai_provider === 'gemini' ? t('settings.apiKeyPlaceholderDefault') : t('settings.apiKeyPlaceholderCustom')}
                 />
               </div>
             )}
@@ -176,7 +212,7 @@ export default function Settings() {
             {settings.ai_provider === 'ollama' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
-                  <Globe size={14} className="mr-1" /> Ollama URL
+                  <Globe size={14} className="mr-1" /> {t('settings.ollamaUrl')}
                 </label>
                 <input
                   type="text"
@@ -198,22 +234,22 @@ export default function Settings() {
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
               </svg>
             </span>
-            Bring! Integration
+            {t('settings.bringIntegration')}
           </h2>
-          
+
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">E-Mail</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.email')}</label>
               <input
                 type="email"
                 value={settings.bring_email}
                 onChange={e => setSettings({...settings, bring_email: e.target.value})}
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
-                placeholder="deine@email.de"
+                placeholder={t('settings.emailPlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Passwort</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.password')}</label>
               <input
                 type="password"
                 value={settings.bring_password}
@@ -230,10 +266,9 @@ export default function Settings() {
           className="w-full bg-gray-900 text-white py-4 rounded-xl font-semibold flex items-center justify-center space-x-2 hover:bg-gray-800 transition-colors shadow-lg"
         >
           <Save size={20} />
-          <span>Alle Einstellungen speichern</span>
+          <span>{t('settings.saveAllSettings')}</span>
         </button>
       </div>
     </div>
   );
 }
-
