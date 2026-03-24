@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import http from 'http';
 import https from 'https';
 import { createServer as createViteServer } from 'vite';
 import Database from 'better-sqlite3';
@@ -14,134 +15,160 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '50mb' }));
 
+const mapCategory = (rawCategory: string, productName: string): string => {
+  const text = `${rawCategory} ${productName}`.toLowerCase();
+
+  // Gewürze & Saucen ZUERST — viele Gewürze werden sonst als Gemüse/Fleisch/Getränke gematcht
+  if (text.match(/gewürz|spice|sauce|condiment|salz\b|pfeffer|ketchup|mayo|remoulade|senf|essig|öl\b|olivenöl|dressing|marinade|brühe|bouillon|fond|soja|worcester|tabasco|sriracha|pesto|curry|kurkuma|kümmel|basilikum|rosmarin|oregano|thymian|petersilie|schnittlauch|dill|muskatnuss|paprika.*scharf|chili|peperoncin|ras el hanout|garam masala|zimt|nelke|anis|koriander|knoblauch.*granul|zwiebel.*pulver|sesam.*paste|tahina|saucenbinder|röstzwiebel|hackfleisch.*würz|steak.*pfeffer|pizza.*gewürz|pasta.*würz|bolognese.*gewürz|ankerkraut|fuchs|ostmann|ubena|cornichon|olive|kapern|gewürzzubereitung/)) return 'Gewürze & Saucen';
+  // Tiefkühl (hat Vorrang vor Fleisch/Fisch)
+  if (text.match(/frozen|tiefkühl|tiefgefroren|tk[ -]|ice cream|eis am stiel|pizza.*frozen|iglo|frosta|bofrost|gefrier|golden longs|rösti.*stäbchen/)) return 'Tiefkühl';
+  // Kühlregal
+  if (text.match(/dairy|milk|cheese|yogurt|milch|käse|joghurt|butter|cream|sahne|quark|schmand|skyr|frischkäse|aufschnitt|aufstrich|margarine|\bei\b|eier|creme fraiche|mascarpone|ricotta|mozzarella|grana padano|parmesan|kochsahne|vollmilch/)) return 'Kühlregal';
+  // Fleisch & Fisch (nach Gewürze — damit "Rinder Bouillon" nicht hier landet)
+  if (text.match(/meat|poultry|beef|pork|chicken|fleisch|hähnchen|wurst|würstchen|dörffler|schinken|salami|lachs|thunfisch|garnele|hack\b|rind.*steak|rind.*filet|rind.*roast|schwein|pute|truthahn|shrimp|pangasius|forelle|fish.*filet|fisch.*stäbchen/)) return 'Fleisch & Fisch';
+  // Backwaren
+  if (text.match(/bread|bakery|pastry|brot|brötchen|toast|kuchen|croissant|baguette|semmel|lauge|donut|muffin|teig|blätterteig|pizzateig/)) return 'Backwaren';
+  // Obst & Gemüse
+  if (text.match(/fruit|vegetable|obst|gemüse|apple|banana|tomato|potato|apfel|banane|tomate|kartoffel|gurke|paprika|zwiebel\b|knoblauch\b|ingwer|salat|beere|pilz|champignon|karotte|möhre|brokkoli|zucchini/)) return 'Obst & Gemüse';
+  // Getränke
+  if (text.match(/beverage|drink|water|juice|getränk|wasser|saft|cola|beer|wine|bier|wein|limonade|sprudel|kaffee|tee|milch.*drink/)) return 'Getränke';
+  // Snacks & Süßigkeiten
+  if (text.match(/snack|sweet|candy|chocolate|chips|süßigkeit|schokolade|keks|gummibärchen|riegel|nuss|nüsse/)) return 'Snacks & Süßigkeiten';
+  // Haushalt & Drogerie
+  if (text.match(/cleaning|hygiene|paper|household|haushalt|drogerie|seife|shampoo|waschmittel|spülmittel|papier|beutel|folie|schwamm/)) return 'Haushalt & Drogerie';
+  // Vorratsschrank (Fallback für alles was lange hält)
+  if (text.match(/pasta|rice|cereal|flour|sugar|noodle|reis|mehl|zucker|konserve|dose|canned|passierte tomaten|gehackte tomaten|tomatenmark|haferflocken|müsli|nudeln|spaghetti/)) return 'Vorratsschrank';
+  
+  return 'Sonstiges';
+};
+
 // Initialize SQLite Database
 const dbDir = process.env.DB_DIR || process.cwd();
 const dbPath = path.join(dbDir, 'inventory.db');
 const db = new Database(dbPath);
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    generic_name TEXT,
-    quantity REAL NOT NULL,
-    unit TEXT NOT NULL,
-    expiry_date TEXT,
-    category TEXT,
-    barcode TEXT,
-    pieces_per_pack INTEGER DEFAULT 1,
-    package_size REAL,
-    is_open BOOLEAN DEFAULT 0,
-    opened_at DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+const initDB = () => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      generic_name TEXT,
+      quantity REAL NOT NULL,
+      unit TEXT NOT NULL,
+      expiry_date TEXT,
+      category TEXT,
+      barcode TEXT,
+      pieces_per_pack INTEGER DEFAULT 1,
+      package_size REAL,
+      is_open BOOLEAN DEFAULT 0,
+      opened_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS product_lookup (
-    barcode TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    generic_name TEXT,
-    category TEXT NOT NULL,
-    default_quantity REAL NOT NULL,
-    unit TEXT NOT NULL,
-    pieces_per_pack INTEGER DEFAULT 1
-  );
+    CREATE TABLE IF NOT EXISTS product_lookup (
+      barcode TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      generic_name TEXT,
+      category TEXT NOT NULL,
+      default_quantity REAL NOT NULL,
+      unit TEXT NOT NULL,
+      pieces_per_pack INTEGER DEFAULT 1
+    );
 
-  CREATE TABLE IF NOT EXISTS planned_recipes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT,
-    ingredients TEXT NOT NULL,
-    instructions TEXT NOT NULL,
-    portions INTEGER DEFAULT 2,
-    base_portions INTEGER DEFAULT 2,
-    cooked INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+    CREATE TABLE IF NOT EXISTS planned_recipes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      ingredients TEXT NOT NULL,
+      instructions TEXT NOT NULL,
+      portions INTEGER DEFAULT 2,
+      base_portions INTEGER DEFAULT 2,
+      cooked INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS weekly_plan (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    day_of_week TEXT NOT NULL,
-    recipe_title TEXT NOT NULL,
-    recipe_content TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+    CREATE TABLE IF NOT EXISTS weekly_plan (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day_of_week TEXT NOT NULL,
+      recipe_title TEXT NOT NULL,
+      recipe_content TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS favorite_recipes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT,
-    ingredients TEXT NOT NULL,
-    instructions TEXT NOT NULL,
-    portions INTEGER DEFAULT 2,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+    CREATE TABLE IF NOT EXISTS favorite_recipes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT,
+      ingredients TEXT NOT NULL,
+      instructions TEXT NOT NULL,
+      portions INTEGER DEFAULT 2,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-`);
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
 
-// Add generic_name column if it doesn't exist
-try {
-  db.exec('ALTER TABLE items ADD COLUMN generic_name TEXT');
-} catch (e) {
-  // Column might already exist
-}
+  // Column Migrations
+  const addColumn = (table: string, column: string, type: string) => {
+    try {
+      db.exec(\`ALTER TABLE \${table} ADD COLUMN \${column} \${type}\`);
+    } catch (e) {}
+  };
 
-try {
-  db.exec('ALTER TABLE product_lookup ADD COLUMN generic_name TEXT');
-} catch (e) {
-  // Column might already exist
-}
+  addColumn('items', 'generic_name', 'TEXT');
+  addColumn('product_lookup', 'generic_name', 'TEXT');
+  addColumn('items', 'opened_at', 'DATETIME');
+  addColumn('items', 'is_open', 'BOOLEAN DEFAULT 0');
+  addColumn('items', 'package_size', 'REAL');
 
-// Add opened_at column if it doesn't exist
-try {
-  db.exec('ALTER TABLE items ADD COLUMN opened_at DATETIME');
-} catch (e) {}
-
-try {
-  db.exec('ALTER TABLE items ADD COLUMN is_open BOOLEAN DEFAULT 0');
-} catch (e) {}
-
-try {
-  db.exec('ALTER TABLE items ADD COLUMN package_size REAL');
-} catch (e) {}
-
-// --- Migration for old categories ---
-const migrateCategories = () => {
-  const updates = [
-    { old: 'BREAD', new: 'Backwaren' },
-    { old: 'SALT', new: 'Gewürze & Saucen' },
-    { old: 'FRUIT', new: 'Obst & Gemüse' },
-    { old: 'VEGETABLE', new: 'Obst & Gemüse' },
-    { old: 'MEAT', new: 'Fleisch & Fisch' },
-    { old: 'DAIRY', new: 'Kühlregal' },
-    { old: 'BEVERAGE', new: 'Getränke' },
-    { old: 'SNACK', new: 'Snacks & Süßigkeiten' },
-    { old: 'PANTRY', new: 'Vorratsschrank' },
-    { old: 'OTHER', new: 'Sonstiges' }
-  ];
-  
-  const stmtItems = db.prepare('UPDATE items SET category = ? WHERE UPPER(category) = ?');
-  const stmtLookup = db.prepare('UPDATE product_lookup SET category = ? WHERE UPPER(category) = ?');
-  
+  // Value Migrations
   db.transaction(() => {
+    // Migrate "Packung" units to "Stück"
+    db.prepare("UPDATE items SET unit = 'Stück' WHERE unit = 'Packung'").run();
+    db.prepare("UPDATE product_lookup SET unit = 'Stück' WHERE unit = 'Packung'").run();
+
+    // Ensure package_size is set
+    db.prepare("UPDATE items SET package_size = quantity WHERE package_size IS NULL OR package_size = 0").run();
+
+    // Category migration
+    const updates = [
+      { old: 'BREAD', new: 'Backwaren' },
+      { old: 'SALT', new: 'Gewürze & Saucen' },
+      { old: 'FRUIT', new: 'Obst & Gemüse' },
+      { old: 'VEGETABLE', new: 'Obst & Gemüse' },
+      { old: 'MEAT', new: 'Fleisch & Fisch' },
+      { old: 'DAIRY', new: 'Kühlregal' },
+      { old: 'BEVERAGE', new: 'Getränke' },
+      { old: 'SNACK', new: 'Snacks & Süßigkeiten' },
+      { old: 'PANTRY', new: 'Vorratsschrank' },
+      { old: 'OTHER', new: 'Sonstiges' }
+    ];
+    
+    const stmtItems = db.prepare('UPDATE items SET category = ? WHERE UPPER(category) = ?');
+    const stmtLookup = db.prepare('UPDATE product_lookup SET category = ? WHERE UPPER(category) = ?');
+    
     for (const u of updates) {
       stmtItems.run(u.new, u.old);
       stmtLookup.run(u.new, u.old);
     }
+
+    // Re-categorize all items for better consistency
+    const items = db.prepare('SELECT id, name, category FROM items').all() as any[];
+    const updateItemCat = db.prepare('UPDATE items SET category = ? WHERE id = ?');
+    for (const item of items) {
+      const newCat = mapCategory(item.category || '', item.name);
+      if (newCat !== item.category) {
+        updateItemCat.run(newCat, item.id);
+      }
+    }
   })();
 };
-migrateCategories();
 
-// Migrate "Packung" units to "Stück" (keep all data, just change unit label)
-db.prepare("UPDATE items SET unit = 'Stück' WHERE unit = 'Packung'").run();
-db.prepare("UPDATE product_lookup SET unit = 'Stück' WHERE unit = 'Packung'").run();
-
-// Ensure package_size is set for all items that don't have it
-db.prepare("UPDATE items SET package_size = quantity WHERE package_size IS NULL OR package_size = 0").run();
+initDB();
 
 // Re-categorize runs after mapCategory is defined (see below)
 
@@ -276,6 +303,32 @@ async function getAIResponse(prompt: string, imageBase64?: string, schema?: any,
   throw new Error('Unsupported AI Provider');
 }
 
+// --- Unit and Matching Utilities ---
+const normalizeUnit = (unit: string): string => {
+  const u = unit.toLowerCase().trim();
+  if (u === 'g' || u === 'gramm') return 'g';
+  if (u === 'kg' || u === 'kilogramm') return 'kg';
+  if (u === 'ml' || u === 'milliliter') return 'ml';
+  if (u === 'l' || u === 'liter') return 'l';
+  if (u === 'stk' || u === 'stück' || u === 'piece' || u === 'pcs') return 'Stück';
+  if (u === 'pkg' || u === 'packung' || u === 'pack') return 'Packung';
+  return unit;
+};
+
+const convertToSmallestUnit = (amount: number, unit: string): { amount: number, unit: string } => {
+  const norm = normalizeUnit(unit);
+  if (norm === 'kg') return { amount: amount * 1000, unit: 'g' };
+  if (norm === 'l') return { amount: amount * 1000, unit: 'ml' };
+  return { amount, unit: norm };
+};
+
+const amountsMatch = (reqAmt: number, reqUnit: string, invAmt: number, invUnit: string): boolean => {
+  const req = convertToSmallestUnit(reqAmt, reqUnit);
+  const inv = convertToSmallestUnit(invAmt, invUnit);
+  if (req.unit !== inv.unit) return false;
+  return inv.amount >= req.amount;
+};
+
 // --- API Routes ---
 
 app.get('/api/settings/models', async (req, res) => {
@@ -376,39 +429,56 @@ app.get('/api/shopping-list', (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const upcomingRecipes = db.prepare('SELECT * FROM planned_recipes WHERE date >= ? AND cooked = 0').all(today);
     
-    const requiredIngredients: Record<string, { amount: number, unit: string, name: string }> = {};
+    const required: Record<string, { amount: number, unit: string, name: string }> = {};
 
     upcomingRecipes.forEach((recipe: any) => {
       const ingredients = JSON.parse(recipe.ingredients);
       const ratio = recipe.portions / recipe.base_portions;
       ingredients.forEach((ing: any) => {
-        const key = `${ing.name.toLowerCase()}_${ing.unit}`;
-        const amount = ing.amount * ratio;
-        if (!requiredIngredients[key]) {
-          requiredIngredients[key] = { amount: 0, unit: ing.unit, name: ing.name };
+        const smallest = convertToSmallestUnit(ing.amount * ratio, ing.unit);
+        const key = `${ing.name.toLowerCase()}_${smallest.unit}`;
+        if (!required[key]) {
+          required[key] = { amount: 0, unit: smallest.unit, name: ing.name };
         }
-        requiredIngredients[key].amount += amount;
+        required[key].amount += smallest.amount;
       });
     });
 
     const inventory = db.prepare('SELECT name, quantity, unit FROM items WHERE quantity > 0').all();
     const missingIngredients: any[] = [];
 
-    Object.values(requiredIngredients).forEach((reqIng: any) => {
-      // Find matching items in inventory
-      const matchingItems = inventory.filter(inv => 
-        (inv.name.toLowerCase().includes(reqIng.name.toLowerCase()) || 
-         reqIng.name.toLowerCase().includes(inv.name.toLowerCase())) &&
-        inv.unit === reqIng.unit
-      );
+    Object.values(required).forEach((reqIng: any) => {
+      const matchingItems = inventory.filter(inv => {
+        const isNameMatch = inv.name.toLowerCase().includes(reqIng.name.toLowerCase()) || 
+                          reqIng.name.toLowerCase().includes(inv.name.toLowerCase());
+        if (!isNameMatch) return false;
+        const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
+        return invSmallest.unit === reqIng.unit;
+      });
 
-      const totalInInventory = matchingItems.reduce((sum, inv) => sum + (inv.quantity as number), 0);
+      const totalInInventory = matchingItems.reduce((sum, inv) => {
+        const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
+        return sum + invSmallest.amount;
+      }, 0);
 
       if (totalInInventory < reqIng.amount) {
+        let diff = reqIng.amount - totalInInventory;
+        let displayAmount = diff;
+        let displayUnit = reqIng.unit;
+
+        // Convert back to larger units for display if appropriate
+        if (displayUnit === 'g' && displayAmount >= 1000) {
+          displayAmount /= 1000;
+          displayUnit = 'kg';
+        } else if (displayUnit === 'ml' && displayAmount >= 1000) {
+          displayAmount /= 1000;
+          displayUnit = 'l';
+        }
+
         missingIngredients.push({
           name: reqIng.name,
-          amountNeeded: reqIng.amount - totalInInventory,
-          unit: reqIng.unit
+          amountNeeded: Math.round(displayAmount * 100) / 100,
+          unit: displayUnit
         });
       }
     });
@@ -419,49 +489,6 @@ app.get('/api/shopping-list', (req, res) => {
     res.status(500).json({ error: 'Failed to generate shopping list' });
   }
 });
-
-const mapCategory = (rawCategory: string, productName: string): string => {
-  const text = `${rawCategory} ${productName}`.toLowerCase();
-
-  // Gewürze & Saucen ZUERST — viele Gewürze werden sonst als Gemüse/Fleisch/Getränke gematcht
-  if (text.match(/gewürz|spice|sauce|condiment|salz\b|pfeffer|ketchup|mayo|remoulade|senf|essig|öl\b|olivenöl|dressing|marinade|brühe|bouillon|fond|soja|worcester|tabasco|sriracha|pesto|curry|kurkuma|kümmel|basilikum|rosmarin|oregano|thymian|petersilie|schnittlauch|dill|muskatnuss|paprika.*scharf|chili|peperoncin|ras el hanout|garam masala|zimt|nelke|anis|koriander|knoblauch.*granul|zwiebel.*pulver|sesam.*paste|tahina|saucenbinder|röstzwiebel|hackfleisch.*würz|steak.*pfeffer|pizza.*gewürz|pasta.*würz|bolognese.*gewürz|ankerkraut|fuchs|ostmann|ubena|cornichon|olive|kapern|gewürzzubereitung/)) return 'Gewürze & Saucen';
-  // Tiefkühl (hat Vorrang vor Fleisch/Fisch)
-  if (text.match(/frozen|tiefkühl|tiefgefroren|tk[ -]|ice cream|eis am stiel|pizza.*frozen|iglo|frosta|bofrost|gefrier|golden longs|rösti.*stäbchen/)) return 'Tiefkühl';
-  // Kühlregal
-  if (text.match(/dairy|milk|cheese|yogurt|milch|käse|joghurt|butter|cream|sahne|quark|schmand|skyr|frischkäse|aufschnitt|aufstrich|margarine|\bei\b|eier|creme fraiche|mascarpone|ricotta|mozzarella|grana padano|parmesan|kochsahne|vollmilch/)) return 'Kühlregal';
-  // Fleisch & Fisch (nach Gewürze — damit "Rinder Bouillon" nicht hier landet)
-  if (text.match(/meat|poultry|beef|pork|chicken|fleisch|hähnchen|wurst|würstchen|dörffler|schinken|salami|lachs|thunfisch|garnele|hack\b|rind.*steak|rind.*filet|rind.*roast|schwein|pute|truthahn|shrimp|pangasius|forelle|fish.*filet|fisch.*stäbchen/)) return 'Fleisch & Fisch';
-  // Backwaren
-  if (text.match(/bread|bakery|pastry|brot|brötchen|toast|kuchen|croissant|semmel|laugen|bagel|wrap|tortilla|brioche|bun\b|hotdog.*roll|hotdog.*brød|sandwich/)) return 'Backwaren';
-  // Obst & Gemüse (frisch — nicht Konserven/getrocknet)
-  if (text.match(/fruit|vegetable|obst|gemüse|apple|banana|potato|salat|karotte|gurke|zitrone|orange|beere|avocado|ingwer|champignon|pilz|zwiebel\b|schalotte|knoblauchzehe/)) return 'Obst & Gemüse';
-  // Getränke
-  if (text.match(/beverage|drink|water|juice|getränk|wasser|saft|cola|beer|wine|bier|wein|limo|sprudel|tee\b|kaffee|energy|smoothie|sirup|milch.*drink/)) return 'Getränke';
-  // Snacks & Süßigkeiten
-  if (text.match(/snack|sweet|candy|chocolate|chips|süßigkeit|schokolade|keks|cookie|gummi|bonbon|riegel|müsli.*riegel|nuss.*mix|popcorn|cracker|waffel|praline/)) return 'Snacks & Süßigkeiten';
-  // Haushalt & Drogerie
-  if (text.match(/cleaning|hygiene|paper|household|haushalt|drogerie|seife|shampoo|waschmittel|spülmittel|toiletten|küchentuch|alufolie|frischhalte|müllbeutel|zahnpasta/)) return 'Haushalt & Drogerie';
-  // Vorratsschrank (breit — Konserven, Pasta, Reis, Trockenware, eingelegtes)
-  if (text.match(/pasta|rice|cereal|flour|sugar|noodle|reis|mehl|zucker|konserve|dose|nudel|spaghetti|makkaroni|hörnchen|lasagne.*platt|penne|fusilli|linse|bohne|kidney|erbse|möhren|tomatenmark|passiert|polpa|müsli|haferflocke|cornflakes|marmelade|honig|nutella|couscous|bulgur|semmel.*brösel|paniermehl|backpulver|hefe|gelatine|puddingpulver|artischock|getrocknete.*tomat|rotkohl|puder.*zucker|blütenhonig|risi.*bisi/)) return 'Vorratsschrank';
-
-  return 'Sonstiges';
-};
-
-// Re-categorize items that are likely wrong (e.g., spices in "Getränke")
-(() => {
-  const allItems = db.prepare('SELECT id, name, category FROM items').all() as any[];
-  const stmt = db.prepare('UPDATE items SET category = ? WHERE id = ?');
-  const stmtLookup = db.prepare('UPDATE product_lookup SET category = ? WHERE name = ?');
-  db.transaction(() => {
-    for (const item of allItems) {
-      const newCat = mapCategory('', item.name);
-      if (newCat !== 'Sonstiges' && newCat !== item.category) {
-        stmt.run(newCat, item.id);
-        stmtLookup.run(newCat, item.name);
-      }
-    }
-  })();
-})();
 
 app.get('/api/barcode/lookup/:barcode', async (req, res) => {
   const { barcode } = req.params;
@@ -1283,7 +1310,7 @@ app.post('/api/calendar/week', (req, res) => {
 
 app.put('/api/calendar/:id/cook', async (req, res) => {
   const { id } = req.params;
-  const { openedUpdates } = req.body; // [{ id, days }] - Note: id here refers to the ITEM id, but we need to match it during deduction
+  const { openedUpdates } = req.body; // [{ id, days }]
 
   try {
     const recipe = db.prepare('SELECT * FROM planned_recipes WHERE id = ?').get(id) as any;
@@ -1296,48 +1323,53 @@ app.put('/api/calendar/:id/cook', async (req, res) => {
 
     db.transaction(() => {
       for (const ing of ingredients) {
-        let deductAmount = 0;
-        if (ing.unit !== '%') {
-          deductAmount = ing.amount * ratio;
-        } else {
-          deductAmount = 5 * recipe.portions;
-        }
+        let reqAmt = ing.amount * ratio;
+        if (ing.unit === '%') reqAmt = 5 * recipe.portions;
         
-        let remainingToDeduct = deductAmount;
+        const smallestReq = convertToSmallestUnit(reqAmt, ing.unit);
+        let remainingToDeduct = smallestReq.amount;
         
-        const rows = db.prepare(`SELECT * FROM items WHERE LOWER(name) LIKE LOWER(?) OR LOWER(?) LIKE LOWER('%' || name || '%') ORDER BY is_open DESC, expiry_date ASC`).all(`%${ing.name}%`, ing.name) as any[];
+        const rows = db.prepare(`SELECT * FROM items WHERE (LOWER(name) LIKE LOWER(?) OR LOWER(?) LIKE LOWER('%' || name || '%')) AND quantity > 0 ORDER BY is_open DESC, expiry_date ASC`).all(`%${ing.name}%`, ing.name) as any[];
         
-        if (rows.length > 0) {
-          for (const item of rows) {
+        const matchingRows = rows.filter(row => {
+          const invSmallest = convertToSmallestUnit(row.quantity, row.unit);
+          return invSmallest.unit === smallestReq.unit;
+        });
+
+        if (matchingRows.length > 0) {
+          for (const item of matchingRows) {
             if (remainingToDeduct <= 0) break;
             
+            const itemSmallest = convertToSmallestUnit(item.quantity, item.unit);
+            const pkgSizeSmallest = convertToSmallestUnit(item.package_size || item.quantity, item.unit);
+
             if (item.is_open) {
-              const take = Math.min(item.quantity, remainingToDeduct);
+              const take = Math.min(itemSmallest.amount, remainingToDeduct);
               remainingToDeduct -= take;
-              db.prepare('UPDATE items SET quantity = quantity - ? WHERE id = ?').run(take, item.id);
-              deducted.push({ ...item, quantity_deducted: take });
+              // Convert back to original unit for DB update
+              const newQty = (itemSmallest.amount - take) / (itemSmallest.amount / item.quantity);
+              db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
+              deducted.push({ ...item, quantity_deducted_smallest: take });
             } else {
-              const pkgSize = item.package_size || item.quantity;
-              if (remainingToDeduct >= item.quantity) {
-                remainingToDeduct -= item.quantity;
+              if (remainingToDeduct >= itemSmallest.amount) {
+                remainingToDeduct -= itemSmallest.amount;
                 db.prepare('UPDATE items SET quantity = 0 WHERE id = ?').run(item.id);
-                deducted.push({ ...item, quantity_deducted: item.quantity });
+                deducted.push({ ...item, quantity_deducted_smallest: itemSmallest.amount });
               } else {
-                let packagesToOpen = Math.ceil(remainingToDeduct / pkgSize);
-                let totalOpenedAmount = packagesToOpen * pkgSize;
-                let leftoverOpened = totalOpenedAmount - remainingToDeduct;
+                let packagesToOpen = Math.ceil(remainingToDeduct / pkgSizeSmallest.amount);
+                let totalOpenedSmallest = packagesToOpen * pkgSizeSmallest.amount;
+                let leftoverSmallest = totalOpenedSmallest - remainingToDeduct;
                 
-                if (totalOpenedAmount > item.quantity) {
-                  totalOpenedAmount = item.quantity;
-                  leftoverOpened = totalOpenedAmount - remainingToDeduct;
+                if (totalOpenedSmallest > itemSmallest.amount) {
+                  totalOpenedSmallest = itemSmallest.amount;
+                  leftoverSmallest = totalOpenedSmallest - remainingToDeduct;
                 }
                 
-                db.prepare('UPDATE items SET quantity = quantity - ? WHERE id = ?').run(totalOpenedAmount, item.id);
-                deducted.push({ ...item, quantity_deducted: remainingToDeduct });
+                const newQty = (itemSmallest.amount - totalOpenedSmallest) / (itemSmallest.amount / item.quantity);
+                db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
+                deducted.push({ ...item, quantity_deducted_smallest: remainingToDeduct });
                 
-                if (leftoverOpened > 0) {
-                  // Check if we have an update for this item
-                  // Since we are iterating, we can check if this item ID is in openedUpdates
+                if (leftoverSmallest > 0) {
                   const update = openedUpdates?.find((u: any) => u.id === item.id);
                   let expiryDate = item.expiry_date;
                   if (update) {
@@ -1346,14 +1378,19 @@ app.put('/api/calendar/:id/cook', async (req, res) => {
                     expiryDate = newExpiry.toISOString().split('T')[0];
                   }
 
-                  const info = db.prepare(`INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`).run(item.name, item.generic_name, leftoverOpened, item.unit, expiryDate, item.category, item.barcode, item.pieces_per_pack, pkgSize);
+                  const leftoverQty = leftoverSmallest / (pkgSizeSmallest.amount / (item.package_size || item.quantity));
+                  db.prepare(`INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`).run(item.name, item.generic_name, leftoverQty, item.unit, expiryDate, item.category, item.barcode, item.pieces_per_pack, item.package_size || item.quantity);
                 }
                 remainingToDeduct = 0;
               }
             }
           }
           if (remainingToDeduct > 0) {
-            missing.push(`${ing.name} (Fehlt: ${remainingToDeduct} ${ing.unit})`);
+            let displayMissing = remainingToDeduct;
+            let displayUnit = smallestReq.unit;
+            if (displayUnit === 'g' && displayMissing >= 1000) { displayMissing /= 1000; displayUnit = 'kg'; }
+            if (displayUnit === 'ml' && displayMissing >= 1000) { displayMissing /= 1000; displayUnit = 'l'; }
+            missing.push(`${ing.name} (Fehlt: ${Math.round(displayMissing * 100) / 100} ${displayUnit})`);
           }
         } else {
           missing.push(ing.name);
@@ -1536,9 +1573,78 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static('dist'));
-    // SPA fallback: all non-API routes serve index.html
+  }
+
+  // Mirror display route — standalone dark page, no React/Navbar
+  app.get('/mirror/today', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Service-Worker-Allowed', 'none');
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const recipes = db.prepare('SELECT * FROM planned_recipes WHERE date = ? AND cooked = 0 ORDER BY id ASC').all(today) as any[];
+
+      let recipeHtml = '';
+      if (recipes.length === 0) {
+        recipeHtml = '<div class="empty"><div class="icon">🍽️</div><p>Kein Rezept für heute geplant</p></div>';
+      } else {
+        for (const r of recipes) {
+          const ingredients = JSON.parse(r.ingredients);
+          const instructions = JSON.parse(r.instructions);
+          recipeHtml += `
+            <div class="recipe">
+              <h1>${r.title}</h1>
+              <p class="desc">${r.description || ''}</p>
+              <div class="meta">${r.portions} Portionen</div>
+              <div class="columns">
+                <div class="col">
+                  <h2>Zutaten</h2>
+                  <ul>${ingredients.map((i: any) => `<li><span class="amount">${i.amount} ${i.unit}</span> ${i.name} ${i.in_inventory ? '<span class="ok">✓</span>' : '<span class="missing">✗</span>'}</li>`).join('')}</ul>
+                </div>
+                <div class="col">
+                  <h2>Zubereitung</h2>
+                  <ol>${instructions.map((s: string) => `<li>${s}</li>`).join('')}</ol>
+                </div>
+              </div>
+            </div>`;
+        }
+      }
+
+      res.send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rezept des Tages</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 40px 60px; }
+  .empty { text-align: center; padding: 200px 0; }
+  .empty .icon { font-size: 80px; margin-bottom: 20px; }
+  .empty p { font-size: 1.8em; color: #666; }
+  .recipe { margin-bottom: 40px; }
+  h1 { font-size: 2.8em; font-weight: 700; margin-bottom: 8px; text-shadow: 0 2px 12px rgba(255,255,255,0.1); }
+  .desc { font-size: 1.2em; color: #aaa; margin-bottom: 16px; }
+  .meta { font-size: 1em; color: #10b981; font-weight: 600; margin-bottom: 30px; padding: 8px 16px; background: rgba(16,185,129,0.1); border-radius: 12px; display: inline-block; border: 1px solid rgba(16,185,129,0.2); }
+  .columns { display: flex; gap: 60px; }
+  .col { flex: 1; }
+  h2 { font-size: 1em; text-transform: uppercase; letter-spacing: 3px; color: #888; margin-bottom: 20px; padding-bottom: 8px; border-bottom: 1px solid #333; }
+  ul, ol { list-style: none; }
+  ul li { padding: 8px 0; border-bottom: 1px solid #1a1a1a; font-size: 1.1em; display: flex; align-items: center; gap: 8px; }
+  ol li { padding: 12px 0; border-bottom: 1px solid #1a1a1a; font-size: 1.05em; counter-increment: step; display: flex; gap: 12px; }
+  ol li::before { content: counter(step); flex-shrink: 0; width: 28px; height: 28px; background: #1a1a1a; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: 700; color: #666; }
+  ol { counter-reset: step; }
+  .amount { color: #10b981; font-weight: 700; min-width: 80px; }
+  .ok { color: #10b981; }
+  .missing { color: #ef4444; }
+</style></head><body>${recipeHtml}</body></html>`);
+    } catch (error) {
+      res.status(500).send('Error loading recipe');
+    }
+  });
+
+  if (process.env.NODE_ENV !== 'production') {
+    // already handled above
+  } else {
+    // SPA fallback: all non-API/mirror routes serve index.html
     app.get('*', (req, res, next) => {
-      if (req.path.startsWith('/api/')) return next();
+      if (req.path.startsWith('/api/') || req.path.startsWith('/mirror/')) return next();
       res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
     });
   }
@@ -1565,6 +1671,12 @@ async function startServer() {
 
   https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on https://0.0.0.0:${PORT}`);
+  });
+
+  // HTTP on port 3001 for local iframe embedding (MagicMirror)
+  const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3001');
+  http.createServer(app).listen(HTTP_PORT, '0.0.0.0', () => {
+    console.log(`HTTP server on http://0.0.0.0:${HTTP_PORT} (for local iframe embedding)`);
   });
 }
 

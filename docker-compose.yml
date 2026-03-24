@@ -1,12 +1,14 @@
 services:
   foodai:
-    build: .
+    image: ghcr.io/jiromusik/foodai:latest
     container_name: foodai
     restart: unless-stopped
     ports:
-      - "3099:3000"
+      - "3000:3000"
     volumes:
       - foodai-data:/app/data
+    env_file:
+      - .env
     environment:
       - DB_DIR=/app/data
       - NODE_ENV=production

@@ -3,3 +3,9 @@ node_modules
 .env
 .env.local
 .git
+docs
+GEMINI.md
+CLAUDE.md
+*.key
+*.cert
+*.pem

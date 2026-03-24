@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+*.db
+server.key
+server.cert
+*.pem
+GEMINI.md
+metadata.json
+docs/plans/
