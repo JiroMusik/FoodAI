@@ -195,7 +195,7 @@ Apache-2.0 — see [LICENSE](LICENSE)
 
 <div align="center">
 
-**Built with ❤️ and AI**
+**Built with ❤️ and AI by [N3LSON](https://nnelson.de/)**
 
 [![PayPal](https://img.shields.io/badge/Buy_me_a_coffee-PayPal-blue?logo=paypal)](https://www.paypal.com/paypalme/germanquestions)
 
