@@ -484,8 +484,9 @@ app.get('/api/dashboard', (req, res) => {
     }));
 
     const totalValue = db.prepare('SELECT SUM(price * quantity) as value FROM items WHERE price IS NOT NULL').get() as any;
+    const lowStockCount = (db.prepare('SELECT COUNT(*) as cnt FROM items WHERE min_stock > 0 AND quantity <= min_stock').get() as any)?.cnt || 0;
 
-    res.json({ expiringSoon, openedItems, todaysRecipes, totalValue: totalValue?.value || 0 });
+    res.json({ expiringSoon, openedItems, todaysRecipes, totalValue: totalValue?.value || 0, lowStockCount });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch dashboard data' });
   }
