@@ -20,6 +20,8 @@ export default function Dashboard() {
     expiringSoon: InventoryItem[];
     openedItems: InventoryItem[];
     todaysRecipes: PlannedRecipe[];
+    totalValue: number;
+    lowStockCount: number;
   } | null>(null);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
 
@@ -65,7 +67,14 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col h-full p-4 pb-24">
       <header className="flex justify-between items-center mb-4 pt-4 shrink-0 max-w-7xl mx-auto w-full">
-        <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('dashboard.title')}</h1>
+        <div className="flex flex-col">
+          <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('dashboard.title')}</h1>
+          <div className="flex gap-2 mt-1">
+            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 uppercase tracking-tighter">
+              {data?.totalValue.toLocaleString(i18n.language === 'de' ? 'de-DE' : 'en-US', { style: 'currency', currency: 'EUR' })} {t('dashboard.stockValue')}
+            </span>
+          </div>
+        </div>
         <button onClick={() => navigate('/settings')} className="p-2 text-gray-500 hover:text-gray-900 bg-gray-100 rounded-full">
           <Settings size={20} />
         </button>

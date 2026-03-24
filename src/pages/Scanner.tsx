@@ -500,6 +500,33 @@ export default function Scanner() {
                     </select>
                   </div>
 
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="group">
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">Lagerort</label>
+                      <select
+                        value={result.location || 'Vorratsschrank'}
+                        onChange={e => setResult({...result, location: e.target.value})}
+                        className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold bg-transparent transition-colors"
+                      >
+                        <option value="Vorratsschrank">Vorratsschrank</option>
+                        <option value="Kühlschrank">Kühlschrank</option>
+                        <option value="Gefrierschrank">Gefrierschrank</option>
+                        <option value="Speisekammer">Speisekammer</option>
+                        <option value="Keller">Keller</option>
+                      </select>
+                    </div>
+                    <div className="group">
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">Preis (€)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={result.price || ''}
+                        onChange={e => setResult({...result, price: Number(e.target.value)})}
+                        className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold transition-colors"
+                      />
+                    </div>
+                  </div>
+
                   <div className="group">
                     <div className="flex items-center justify-between mb-2">
                       <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest group-focus-within:text-emerald-500 transition-colors">{t('scanner.shelfLife')}</label>

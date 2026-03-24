@@ -54,7 +54,12 @@ export default function Inventory() {
   const [editExpiry, setEditExpiry] = useState<string>('');
   const [editPackageSize, setEditPackageSize] = useState<string>('0');
   const [editCategory, setEditCategory] = useState<string>('');
+  const [editPrice, setEditPrice] = useState<string>('0');
+  const [editLocation, setEditLocation] = useState<string>('Vorratsschrank');
+  const [editMinStock, setEditMinStock] = useState<string>('0');
   const [openingId, setOpeningId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [isBulkMode, setIsBulkMode] = useState(false);
 
   useEffect(() => { fetchInventory(); }, []);
 
@@ -81,14 +86,34 @@ export default function Inventory() {
     if (!item) return;
     try {
       const pkgSize = parseFloat(editPackageSize) || amount;
-      const finalPkgSize = Math.max(pkgSize, amount); // package_size never smaller than quantity
+      const finalPkgSize = Math.max(pkgSize, amount);
       const res = await fetch(`/api/inventory/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...item, quantity: amount, unit: editUnit, expiry_date: editExpiry || null, package_size: finalPkgSize, category: editCategory })
+        body: JSON.stringify({ 
+          ...item, 
+          quantity: amount, 
+          unit: editUnit, 
+          expiry_date: editExpiry || null, 
+          package_size: finalPkgSize, 
+          category: editCategory,
+          price: parseFloat(editPrice) || 0,
+          location: editLocation,
+          min_stock: parseFloat(editMinStock) || 0
+        })
       });
       if (res.ok) {
-        setItems(items.map(i => i.id === id ? { ...i, quantity: amount, unit: editUnit, expiry_date: editExpiry || null, package_size: finalPkgSize, category: editCategory } : i));
+        setItems(items.map(i => i.id === id ? { 
+          ...i, 
+          quantity: amount, 
+          unit: editUnit, 
+          expiry_date: editExpiry || null, 
+          package_size: finalPkgSize, 
+          category: editCategory,
+          price: parseFloat(editPrice) || 0,
+          location: editLocation,
+          min_stock: parseFloat(editMinStock) || 0
+        } : i));
         toast.success(t('common.updated'));
         setEditingId(null);
       }
@@ -143,6 +168,44 @@ export default function Inventory() {
     finally { setOpeningId(null); }
   };
 
+  const handleBulkDelete = async () => {
+    if (!selectedIds.length || !window.confirm(`${selectedIds.length} Artikel wirklich löschen?`)) return;
+    try {
+      const res = await fetch('/api/inventory/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds })
+      });
+      if (res.ok) {
+        setItems(items.filter(i => !selectedIds.includes(i.id)));
+        setSelectedIds([]);
+        setIsBulkMode(false);
+        toast.success(t('common.deleted'));
+      }
+    } catch (e) { toast.error(t('common.errorDeleting')); }
+  };
+
+  const handleBulkUpdate = async (updates: any) => {
+    if (!selectedIds.length) return;
+    try {
+      const res = await fetch('/api/inventory/bulk-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds, updates })
+      });
+      if (res.ok) {
+        setItems(items.map(i => selectedIds.includes(i.id) ? { ...i, ...updates } : i));
+        setSelectedIds([]);
+        setIsBulkMode(false);
+        toast.success(t('common.updated'));
+      }
+    } catch (e) { toast.error(t('common.errorUpdating')); }
+  };
+
+  const toggleSelection = (id: number) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
   const toggleCategory = (category: string) => {
     setExpandedCategories(prev =>
       prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]
@@ -190,8 +253,20 @@ export default function Inventory() {
       <header className="mb-6 sm:mb-10 pt-2 sm:pt-4">
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('inventory.title')}</h1>
-          <div className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold">
-            {t('inventory.packagesCount', { count: totalItems })}
+          <div className="flex gap-2">
+            <button 
+              onClick={() => {
+                setIsBulkMode(!isBulkMode);
+                setSelectedIds([]);
+              }}
+              className={`p-2 rounded-xl transition-all ${isBulkMode ? 'bg-emerald-600 text-white shadow-lg' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+              title="Selection Mode"
+            >
+              <Check size={20} />
+            </button>
+            <div className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold flex items-center">
+              {t('inventory.packagesCount', { count: totalItems })}
+            </div>
           </div>
         </div>
       </header>
@@ -249,7 +324,27 @@ export default function Inventory() {
 
                         {/* Individual packages */}
                         {packages.map((item) => (
-                          <div key={item.id} className="p-3 sm:p-4 border-b border-gray-50 last:border-b-0">
+                          <div 
+                            key={item.id} 
+                            onClick={() => isBulkMode && toggleSelection(item.id)}
+                            className={`p-3 sm:p-4 border-b border-gray-50 last:border-b-0 transition-all ${
+                              isBulkMode && selectedIds.includes(item.id) ? 'bg-emerald-50/50' : ''
+                            }`}
+                          >
+                            {/* Selection indicator for bulk mode */}
+                            {isBulkMode && (
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${
+                                  selectedIds.includes(item.id) ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 bg-white'
+                                }`}>
+                                  {selectedIds.includes(item.id) && <Check size={14} strokeWidth={4} />}
+                                </div>
+                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                                  {selectedIds.includes(item.id) ? 'Ausgewählt' : 'Auswählen'}
+                                </span>
+                              </div>
+                            )}
+
                             {editingId === item.id ? (
                               /* Edit mode */
                               <div className="bg-gray-50 rounded-xl p-3 space-y-3">
@@ -300,7 +395,45 @@ export default function Inventory() {
                                     </div>
 
                                     {/* Quick buttons based on unit */}
-                                    {(editUnit === 'g' || editUnit === 'ml') && (
+                                    <div className="grid grid-cols-2 gap-3">
+                                <div className="group">
+                                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Lagerort</label>
+                                  <select
+                                    value={editLocation}
+                                    onChange={(e) => setEditLocation(e.target.value)}
+                                    className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-800 focus:ring-2 focus:ring-emerald-500 outline-none"
+                                  >
+                                    <option value="Vorratsschrank">Vorratsschrank</option>
+                                    <option value="Kühlschrank">Kühlschrank</option>
+                                    <option value="Gefrierschrank">Gefrierschrank</option>
+                                    <option value="Speisekammer">Speisekammer</option>
+                                    <option value="Keller">Keller</option>
+                                  </select>
+                                </div>
+                                <div className="group">
+                                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Preis (€)</label>
+                                  <input 
+                                    type="number" 
+                                    step="0.01"
+                                    value={editPrice}
+                                    onChange={e => setEditPrice(e.target.value)}
+                                    className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-800 focus:ring-2 focus:ring-emerald-500 outline-none"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="group">
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Mindestbestand (Einkaufswarnung)</label>
+                                <input 
+                                  type="number" 
+                                  value={editMinStock}
+                                  onChange={e => setEditMinStock(e.target.value)}
+                                  className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-800 focus:ring-2 focus:ring-emerald-500 outline-none"
+                                  placeholder="0 = Deaktiviert"
+                                />
+                              </div>
+
+                              {(editUnit === 'g' || editUnit === 'ml') && (
                                       <div className="flex flex-wrap gap-2">
                                         <button onClick={() => handleQuickAdd(-100)} className="flex-1 py-1.5 bg-white border rounded-lg text-xs font-bold text-gray-600">-100</button>
                                         <button onClick={() => handleQuickAdd(-50)} className="flex-1 py-1.5 bg-white border rounded-lg text-xs font-bold text-gray-600">-50</button>
@@ -387,13 +520,16 @@ export default function Inventory() {
                                       <span className="text-[9px] font-bold">{t('inventory.openTooltip')}</span>
                                     </button>
                                   )}
-                                  <button onClick={() => {
-                                    setEditingId(item.id);
-                                    setEditAmount(item.quantity.toString());
+                                  <button onClick={() => { 
+                                    setEditingId(item.id); 
+                                    setEditAmount(item.quantity.toString()); 
                                     setEditUnit(item.unit);
                                     setEditExpiry(item.expiry_date || '');
-                                    setEditPackageSize((item.package_size || item.quantity).toString());
+                                    setEditPackageSize(item.package_size?.toString() || item.quantity.toString());
                                     setEditCategory(item.category);
+                                    setEditPrice(item.price?.toString() || '0');
+                                    setEditLocation(item.location || 'Vorratsschrank');
+                                    setEditMinStock(item.min_stock?.toString() || '0');
                                   }} className="flex flex-col items-center gap-0.5 p-1.5 text-emerald-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all">
                                     <Package size={20} />
                                     <span className="text-[9px] font-bold">{t('inventory.editTooltip')}</span>
@@ -427,6 +563,55 @@ export default function Inventory() {
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {isBulkMode && selectedIds.length > 0 && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="fixed bottom-20 left-4 right-4 bg-white/95 backdrop-blur-md border border-emerald-100 shadow-2xl rounded-3xl p-4 flex flex-col gap-3 z-50 max-w-2xl mx-auto ring-1 ring-black/5"
+          >
+            <div className="flex justify-between items-center px-2">
+              <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">{selectedIds.length} ausgewählt</span>
+              <button onClick={() => setSelectedIds([])} className="text-[10px] font-bold text-gray-400 hover:text-gray-600 uppercase tracking-tight">{t('common.cancel')}</button>
+            </div>
+            
+            <div className="grid grid-cols-3 gap-2">
+              <select 
+                className="bg-gray-50 border border-gray-100 rounded-xl px-2 py-2 text-[10px] font-bold text-gray-600 outline-none appearance-none text-center"
+                onChange={(e) => handleBulkUpdate({ category: e.target.value })}
+                value=""
+              >
+                <option value="" disabled>Kategorie</option>
+                {categoryValues.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+
+              <select 
+                className="bg-gray-50 border border-gray-100 rounded-xl px-2 py-2 text-[10px] font-bold text-gray-600 outline-none appearance-none text-center"
+                onChange={(e) => handleBulkUpdate({ location: e.target.value })}
+                value=""
+              >
+                <option value="" disabled>Lagerort</option>
+                <option value="Vorratsschrank">Vorrat</option>
+                <option value="Kühlschrank">Kühlschrank</option>
+                <option value="Gefrierschrank">TK</option>
+                <option value="Speisekammer">Kammer</option>
+                <option value="Keller">Keller</option>
+              </select>
+
+              <button 
+                onClick={handleBulkDelete}
+                className="bg-red-50 text-red-600 py-2 rounded-xl text-[10px] font-bold hover:bg-red-100 transition-colors flex items-center justify-center gap-2"
+              >
+                <Trash2 size={14} /> {t('common.delete')}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <Navigation />
     </div>
   );
 }

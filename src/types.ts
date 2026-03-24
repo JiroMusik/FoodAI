@@ -11,6 +11,9 @@ export interface InventoryItem {
   barcode?: string;
   pieces_per_pack?: number;
   package_size?: number;
+  location?: string;
+  price?: number;
+  min_stock?: number;
   created_at: string;
 }
 

@@ -100,6 +100,9 @@ const initDB = () => {
       package_size REAL,
       is_open BOOLEAN DEFAULT 0,
       opened_at DATETIME,
+      location TEXT DEFAULT 'Vorratsschrank',
+      price REAL,
+      min_stock REAL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -110,7 +113,10 @@ const initDB = () => {
       category TEXT NOT NULL,
       default_quantity REAL NOT NULL,
       unit TEXT NOT NULL,
-      pieces_per_pack INTEGER DEFAULT 1
+      pieces_per_pack INTEGER DEFAULT 1,
+      location TEXT,
+      price REAL,
+      min_stock REAL
     );
 
     CREATE TABLE IF NOT EXISTS planned_recipes (
@@ -163,6 +169,12 @@ const initDB = () => {
   addColumn('items', 'opened_at', 'DATETIME');
   addColumn('items', 'is_open', 'BOOLEAN DEFAULT 0');
   addColumn('items', 'package_size', 'REAL');
+  addColumn('items', 'location', 'TEXT DEFAULT "Vorratsschrank"');
+  addColumn('items', 'price', 'REAL');
+  addColumn('items', 'min_stock', 'REAL DEFAULT 0');
+  addColumn('product_lookup', 'location', 'TEXT');
+  addColumn('product_lookup', 'price', 'REAL');
+  addColumn('product_lookup', 'min_stock', 'REAL');
 
   // Value Migrations
   db.transaction(() => {
@@ -471,7 +483,9 @@ app.get('/api/dashboard', (req, res) => {
       cooked: r.cooked === 1
     }));
 
-    res.json({ expiringSoon, openedItems, todaysRecipes });
+    const totalValue = db.prepare('SELECT SUM(price * quantity) as value FROM items WHERE price IS NOT NULL').get() as any;
+
+    res.json({ expiringSoon, openedItems, todaysRecipes, totalValue: totalValue?.value || 0 });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch dashboard data' });
   }
@@ -497,7 +511,34 @@ app.get('/api/shopping-list', (req, res) => {
       });
     });
 
-    const inventory = db.prepare('SELECT name, quantity, unit FROM items WHERE quantity > 0').all();
+    const inventory = db.prepare('SELECT name, quantity, unit, min_stock FROM items WHERE quantity > 0').all() as any[];
+    
+    // Add items that are below minimum stock
+    const allKnownItems = db.prepare('SELECT name, quantity, unit, min_stock FROM items').all() as any[];
+    const lowStockItems: Record<string, { amount: number, unit: string, name: string }> = {};
+    
+    // Group by name and unit for min_stock check
+    const stockLevels: Record<string, { total: number, min: number, unit: string }> = {};
+    allKnownItems.forEach(item => {
+      const key = `${item.name.toLowerCase()}_${normalizeUnit(item.unit)}`;
+      if (!stockLevels[key]) {
+        stockLevels[key] = { total: 0, min: item.min_stock || 0, unit: normalizeUnit(item.unit) };
+      }
+      const smallest = convertToSmallestUnit(item.quantity, item.unit);
+      stockLevels[key].total += smallest.amount;
+    });
+
+    Object.entries(stockLevels).forEach(([key, level]) => {
+      if (level.min > 0 && level.total < level.min) {
+        const name = key.split('_')[0];
+        const missing = level.min - level.total;
+        if (!required[key]) {
+          required[key] = { amount: 0, unit: level.unit, name: name.charAt(0).toUpperCase() + name.slice(1) };
+        }
+        required[key].amount += missing;
+      }
+    });
+
     const missingIngredients: any[] = [];
 
     Object.values(required).forEach((reqIng: any) => {
@@ -782,18 +823,18 @@ app.get('/api/recipes/weekly', (req, res) => {
 });
 
 app.post('/api/inventory', (req, res) => {
-  const { name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack } = req.body;
+  const { name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, location, price, min_stock } = req.body;
   try {
     // Save to product_lookup for future barcode scans
     if (barcode) {
-      db.prepare('INSERT OR IGNORE INTO product_lookup (barcode, name, generic_name, category, default_quantity, unit, pieces_per_pack) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(barcode, name, generic_name || name, category, quantity, unit, pieces_per_pack || 1);
+      db.prepare('INSERT OR IGNORE INTO product_lookup (barcode, name, generic_name, category, default_quantity, unit, pieces_per_pack, location, price, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(barcode, name, generic_name || name, category, quantity, unit, pieces_per_pack || 1, location, price, min_stock);
     }
 
     // Always create a new item — each physical package is its own row
-    const stmt = db.prepare('INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)');
-    const info = stmt.run(name, generic_name || name, quantity, unit, expiry_date, category, barcode, pieces_per_pack || 1, quantity);
-    res.json({ id: info.lastInsertRowid, name, generic_name: generic_name || name, quantity, unit, expiry_date, category, barcode, package_size: quantity });
+    const stmt = db.prepare('INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open, location, price, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)');
+    const info = stmt.run(name, generic_name || name, quantity, unit, expiry_date, category, barcode, pieces_per_pack || 1, quantity, location || 'Vorratsschrank', price || 0, min_stock || 0);
+    res.json({ id: info.lastInsertRowid, name, generic_name: generic_name || name, quantity, unit, expiry_date, category, barcode, package_size: quantity, location: location || 'Vorratsschrank', price, min_stock });
   } catch (error) {
     console.error('Inventory add error:', error);
     res.status(500).json({ error: 'Failed to add item' });
@@ -802,7 +843,7 @@ app.post('/api/inventory', (req, res) => {
 
 app.put('/api/inventory/:id', (req, res) => {
   const { id } = req.params;
-  const { name, generic_name, quantity, unit, expiry_date, category, package_size } = req.body;
+  const { name, generic_name, quantity, unit, expiry_date, category, package_size, location, price, min_stock } = req.body;
   try {
     // If quantity exceeds package_size, update package_size too
     const existing = db.prepare('SELECT package_size FROM items WHERE id = ?').get(id) as any;
@@ -811,8 +852,8 @@ app.put('/api/inventory/:id', (req, res) => {
       newPackageSize = quantity;
     }
 
-    const stmt = db.prepare('UPDATE items SET name = ?, generic_name = ?, quantity = ?, unit = ?, expiry_date = ?, category = ?, package_size = ? WHERE id = ?');
-    stmt.run(name, generic_name || name, quantity, unit, expiry_date, category, newPackageSize, id);
+    const stmt = db.prepare('UPDATE items SET name = ?, generic_name = ?, quantity = ?, unit = ?, expiry_date = ?, category = ?, package_size = ?, location = ?, price = ?, min_stock = ? WHERE id = ?');
+    stmt.run(name, generic_name || name, quantity, unit, expiry_date, category, newPackageSize, location, price, min_stock, id);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update item' });
@@ -827,6 +868,40 @@ app.delete('/api/inventory/:id', (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete item' });
+  }
+});
+
+app.post('/api/inventory/bulk-delete', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No IDs provided' });
+  try {
+    const stmt = db.prepare('DELETE FROM items WHERE id = ?');
+    db.transaction(() => {
+      for (const id of ids) {
+        stmt.run(id);
+      }
+    })();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to bulk delete items' });
+  }
+});
+
+app.post('/api/inventory/bulk-update', (req, res) => {
+  const { ids, updates } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No IDs provided' });
+  try {
+    const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+    const values = Object.values(updates);
+    const stmt = db.prepare(`UPDATE items SET ${fields} WHERE id = ?`);
+    db.transaction(() => {
+      for (const id of ids) {
+        stmt.run(...values, id);
+      }
+    })();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to bulk update items' });
   }
 });
 
@@ -938,8 +1013,8 @@ app.post('/api/scan', largeBody, async (req, res) => {
   if (!imageBase64) return res.status(400).json({ error: 'No image provided' });
 
   try {
-    const prompt = 'Analyze this image of a food product, barcode, or label. 1. Identify the product name. IMPORTANT: Remove brand names (e.g., "Iglo", "Barilla", "Gut & Günstig") but KEEP the variant/type (e.g., "Rahmspinat", "Lasagne", "Dunkler Saucenbinder", "Hähnchenschnitzel"). Example: "Iglo Rahmspinat Blubb" -> "Rahmspinat". "Knorr Saucenbinder Dunkel" -> "Dunkler Saucenbinder". 2. Determine a generic_name for grouping (e.g., "Rahmspinat (TK)"). 3. If a barcode is visible, try to decode it. 4. Estimate the CONTENT quantity and unit — always use the actual content unit, never "Packung". A 2L bottle = quantity:2000 unit:"ml". A 500g pack of pasta = quantity:500 unit:"g". A pack of 10 eggs = quantity:10 unit:"Stück". For spices/oils where exact weight is hard to track, use quantity:100 unit:"%". 5. Identify an expiry date if visible (YYYY-MM-DD). ONLY return a date if you are VERY sure. If unsure or not visible, return null. Return a JSON object with keys: name (string), generic_name (string), quantity (number), unit (string), category (string), expiry_date (string or null). The category MUST be one of: "Obst & Gemüse", "Kühlregal", "Tiefkühl", "Vorratsschrank", "Getränke", "Backwaren", "Fleisch & Fisch", "Snacks & Süßigkeiten", "Gewürze & Saucen", "Haushalt & Drogerie", "Sonstiges". The unit MUST be one of: "Stück", "g", "kg", "ml", "l", "%".';
-    
+    const prompt = 'Analyze this image of a food product, barcode, or label. 1. Identify the product name. IMPORTANT: Remove brand names (e.g., "Iglo", "Barilla", "Gut & Günstig") but KEEP the variant/type (e.g., "Rahmspinat", "Lasagne", "Dunkler Saucenbinder", "Hähnchenschnitzel"). Example: "Iglo Rahmspinat Blubb" -> "Rahmspinat". "Knorr Saucenbinder Dunkel" -> "Dunkler Saucenbinder". 2. Determine a generic_name for grouping (e.g., "Rahmspinat (TK)"). 3. If a barcode is visible, try to decode it. 4. Estimate the CONTENT quantity and unit — always use the actual content unit, never "Packung". A 2L bottle = quantity:2000 unit:"ml". A 500g pack of pasta = quantity:500 unit:"g". A pack of 10 eggs = quantity:10 unit:"Stück". For spices/oils where exact weight is hard to track, use quantity:100 unit:"%". 5. Identify an expiry date if visible (YYYY-MM-DD). ONLY return a date if you are VERY sure. If unsure or not visible, return null. 6. Estimate the price in EUR if visible or common. 7. Suggest a storage location (e.g., Fridge, Freezer, Pantry). Return a JSON object with keys: name (string), generic_name (string), quantity (number), unit (string), category (string), expiry_date (string or null), price (number or null), location (string). The category MUST be one of: "Obst & Gemüse", "Kühlregal", "Tiefkühl", "Vorratsschrank", "Getränke", "Backwaren", "Fleisch & Fisch", "Snacks & Süßigkeiten", "Gewürze & Saucen", "Haushalt & Drogerie", "Sonstiges". The unit MUST be one of: "Stück", "g", "kg", "ml", "l", "%".';
+
     const schema = {
       type: Type.OBJECT,
       properties: {
@@ -948,11 +1023,12 @@ app.post('/api/scan', largeBody, async (req, res) => {
         quantity: { type: Type.NUMBER },
         unit: { type: Type.STRING, enum: ["Stück", "g", "kg", "ml", "l", "%"] },
         category: { type: Type.STRING, enum: ["Obst & Gemüse", "Kühlregal", "Tiefkühl", "Vorratsschrank", "Getränke", "Backwaren", "Fleisch & Fisch", "Snacks & Süßigkeiten", "Gewürze & Saucen", "Haushalt & Drogerie", "Sonstiges"] },
-        expiry_date: { type: Type.STRING, description: "YYYY-MM-DD format or null" }
+        expiry_date: { type: Type.STRING, description: "YYYY-MM-DD format or null" },
+        price: { type: Type.NUMBER },
+        location: { type: Type.STRING }
       },
       required: ["name", "generic_name", "quantity", "unit", "category"]
     };
-
     const result = await getAIResponse(prompt, imageBase64, schema);
     res.json(result);
   } catch (error) {

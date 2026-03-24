@@ -74,7 +74,9 @@
     "noOpenedPackages": "Keine offenen Packungen.",
     "errorLoadingDashboard": "Fehler beim Laden des Dashboards",
     "inspiration": "Inspiration",
-    "viewRecipe": "Rezept ansehen"
+    "viewRecipe": "Rezept ansehen",
+    "stockValue": "Vorratswert",
+    "lowStock": "Nachkaufen"
   },
   "inventory": {
     "title": "Mein Vorrat",
@@ -86,6 +88,9 @@
     "packageLabel": "Packung:",
     "expiryLabel": "MHD",
     "categoryLabel": "Kategorie",
+    "locationLabel": "Lagerort",
+    "priceLabel": "Preis",
+    "minStockLabel": "Mindestbestand (Warnung)",
     "emptyTitle": "Dein Vorrat ist leer.",
     "emptySubtitle": "Scanne Artikel, um sie hinzuzufügen.",
     "enterValidAmount": "Gültige Menge eingeben",
