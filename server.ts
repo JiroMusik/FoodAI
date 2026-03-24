@@ -1510,15 +1510,26 @@ app.get('/api/settings', (req, res) => {
       acc[row.key] = row.value;
       return acc;
     }, {});
-    
-    // Ensure defaults
+
     const defaults = {
       ai_provider: 'gemini',
       ai_model: 'gemini-3-flash-preview',
       ollama_url: 'http://localhost:11434'
     };
-    
-    res.json({ ...defaults, ...result });
+
+    const merged = { ...defaults, ...result };
+
+    // Mask sensitive values — only show if set, never expose full key
+    const sensitiveKeys = ['ai_api_key', 'bring_password'];
+    for (const key of sensitiveKeys) {
+      if (merged[key]) {
+        const val = merged[key];
+        merged[key + '_set'] = true;
+        merged[key] = val.length > 8 ? val.slice(0, 4) + '••••' + val.slice(-4) : '••••••••';
+      }
+    }
+
+    res.json(merged);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch settings' });
   }
