@@ -333,59 +333,69 @@ const amountsMatch = (reqAmt: number, reqUnit: string, invAmt: number, invUnit: 
 
 app.get('/api/settings/models', async (req, res) => {
   try {
-    // 1. Define known latest models
-    const models = {
-      gemini: [
-        'gemini-2.0-flash-exp',
-        'gemini-1.5-pro',
-        'gemini-1.5-flash',
-        'gemini-1.5-flash-8b'
-      ],
-      openai: [
-        'gpt-4o',
-        'gpt-4o-mini',
-        'o1-preview',
-        'o1-mini'
-      ],
-      anthropic: [
-        'claude-3-5-sonnet-latest',
-        'claude-3-5-haiku-latest',
-        'claude-3-opus-latest'
-      ],
-      moonshot: [
-        'moonshot-v1-8k',
-        'moonshot-v1-32k',
-        'moonshot-v1-128k'
-      ],
-      deepseek: [
-        'deepseek-chat',
-        'deepseek-coder'
-      ]
+    const provider = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_provider') as any)?.value || 'gemini';
+    const apiKey = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_api_key') as any)?.value || process.env.GEMINI_API_KEY || '';
+    const ollamaUrl = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ollama_url') as any)?.value || 'http://localhost:11434';
+
+    const models: Record<string, string[]> = {
+      gemini: [], openai: [], anthropic: [], moonshot: [], deepseek: [], ollama: []
     };
 
-    // 2. Try to fetch from providers if keys exist
-    const geminiKey = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_api_key') as any)?.value || process.env.GEMINI_API_KEY;
-    if (geminiKey) {
-       // Gemini doesn't have a simple public list models endpoint via the SDK easily exposed here without more setup, 
-       // but we can try a direct fetch if we wanted. For now, we stick to the curated list + user input.
+    // Fetch live model lists from providers with API key
+    if (apiKey) {
+      try {
+        if (provider === 'gemini') {
+          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+          if (r.ok) {
+            const data = await r.json();
+            models.gemini = (data.models || [])
+              .map((m: any) => m.name?.replace('models/', '') || '')
+              .filter((id: string) => id && !id.includes('embedding') && !id.includes('aqa'))
+              .sort();
+          }
+        } else if (provider === 'openai') {
+          const r = await fetch('https://api.openai.com/v1/models', { headers: { 'Authorization': `Bearer ${apiKey}` } });
+          if (r.ok) {
+            const data = await r.json();
+            models.openai = (data.data || [])
+              .map((m: any) => m.id)
+              .filter((id: string) => id.includes('gpt') || id.includes('o1') || id.includes('o3') || id.includes('chatgpt'))
+              .sort();
+          }
+        } else if (provider === 'anthropic') {
+          const r = await fetch('https://api.anthropic.com/v1/models', {
+            headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+          });
+          if (r.ok) {
+            const data = await r.json();
+            models.anthropic = (data.data || []).map((m: any) => m.id).sort();
+          }
+        } else if (provider === 'deepseek') {
+          const r = await fetch('https://api.deepseek.com/v1/models', { headers: { 'Authorization': `Bearer ${apiKey}` } });
+          if (r.ok) {
+            const data = await r.json();
+            models.deepseek = (data.data || []).map((m: any) => m.id).sort();
+          }
+        } else if (provider === 'moonshot') {
+          const r = await fetch('https://api.moonshot.cn/v1/models', { headers: { 'Authorization': `Bearer ${apiKey}` } });
+          if (r.ok) {
+            const data = await r.json();
+            models.moonshot = (data.data || []).map((m: any) => m.id).sort();
+          }
+        }
+      } catch (e) {
+        console.error(`Failed to fetch ${provider} models:`, e);
+      }
     }
 
-    const openaiKey = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_api_key') as any)?.value;
-    if (openaiKey) {
-       try {
-         const response = await fetch('https://api.openai.com/v1/models', {
-            headers: { 'Authorization': `Bearer ${openaiKey}` }
-         });
-         if (response.ok) {
-           const data = await response.json();
-           const remoteModels = data.data.map((m: any) => m.id).filter((id: string) => id.includes('gpt') || id.includes('o1'));
-           // Merge and deduplicate
-           models.openai = Array.from(new Set([...models.openai, ...remoteModels])).sort();
-         }
-       } catch (e) {
-         console.error('Failed to fetch OpenAI models', e);
-       }
-    }
+    // Ollama: always try (no API key needed)
+    try {
+      const r = await fetch(`${ollamaUrl}/api/tags`);
+      if (r.ok) {
+        const data = await r.json();
+        models.ollama = (data.models || []).map((m: any) => m.name).sort();
+      }
+    } catch (e) { /* Ollama not running */ }
 
     res.json(models);
   } catch (error) {
