@@ -13,7 +13,44 @@ import fs from 'fs';
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '50mb' }));
+// No CORS middleware: FoodAI is designed for self-hosted, trusted local networks only.
+// If you need cross-origin access, add a reverse proxy with appropriate CORS headers.
+
+app.use(express.json({ limit: '10mb' }));
+
+// Larger body limit for image upload endpoints (base64 photos)
+const largeBody = express.json({ limit: '50mb' });
+
+// --- HTML escaping for XSS prevention ---
+const escapeHtml = (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// --- LIKE metacharacter escaping for SQL injection prevention ---
+const escapeLike = (s: string) => s.replace(/%/g, '\\%').replace(/_/g, '\\_');
+
+// --- SSRF prevention: validate URLs before fetching ---
+function isAllowedUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (!['http:', 'https:'].includes(u.protocol)) return false;
+    // Block cloud metadata endpoints
+    if (u.hostname === '169.254.169.254') return false;
+    return true;
+  } catch { return false; }
+}
+
+// --- In-memory rate limiter for AI endpoints ---
+const aiRateLimit = new Map<string, number[]>();
+function checkRateLimit(ip: string, maxPerMinute: number = 10): boolean {
+  const now = Date.now();
+  const timestamps = (aiRateLimit.get(ip) || []).filter(t => now - t < 60000);
+  if (timestamps.length >= maxPerMinute) return false;
+  timestamps.push(now);
+  aiRateLimit.set(ip, timestamps);
+  return true;
+}
+
+// --- Settings key allowlist ---
+const ALLOWED_SETTINGS = ['ai_provider', 'ai_model', 'ai_api_key', 'ollama_url', 'bring_email', 'bring_password', 'advisor_model', 'language'];
 
 const mapCategory = (rawCategory: string, productName: string): string => {
   const text = `${rawCategory} ${productName}`.toLowerCase();
@@ -113,6 +150,7 @@ const initDB = () => {
   `);
 
   // Column Migrations
+  // Note: String concatenation here is safe — all values are hardcoded literals, not user input.
   const addColumn = (table: string, column: string, type: string) => {
     try {
       db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + type);
@@ -282,6 +320,7 @@ async function getAIResponse(prompt: string, imageBase64?: string, schema?: any,
     }
 
     if (aiProvider === 'ollama') {
+      if (!isAllowedUrl(ollamaUrl)) throw new Error('Invalid Ollama URL');
       const response = await fetch(`${ollamaUrl}/api/generate`, {
         method: 'POST',
         body: JSON.stringify({
@@ -345,7 +384,9 @@ app.get('/api/settings/models', async (req, res) => {
     if (apiKey) {
       try {
         if (provider === 'gemini') {
-          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+          const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+            headers: { 'x-goog-api-key': apiKey }
+          });
           if (r.ok) {
             const data = await r.json();
             models.gemini = (data.models || [])
@@ -390,6 +431,7 @@ app.get('/api/settings/models', async (req, res) => {
 
     // Ollama: always try (no API key needed)
     try {
+      if (!isAllowedUrl(ollamaUrl)) throw new Error('Invalid Ollama URL');
       const r = await fetch(`${ollamaUrl}/api/tags`);
       if (r.ok) {
         const data = await r.json();
@@ -630,6 +672,7 @@ app.get('/api/barcode/lookup/:barcode', async (req, res) => {
 });
 
 app.post('/api/recipes/weekly', async (req, res) => {
+  if (!checkRateLimit(req.ip || 'unknown')) return res.status(429).json({ error: 'Rate limit exceeded. Try again in a minute.' });
   const { preferences, portions } = req.body;
   try {
     const items = db.prepare('SELECT generic_name, name, quantity, unit, expiry_date, category FROM items').all();
@@ -844,7 +887,7 @@ app.post('/api/ha/inventory/update', (req, res) => {
     } else if (barcode) {
       item = db.prepare('SELECT * FROM items WHERE barcode = ?').get(barcode) as any;
     } else if (name) {
-      item = db.prepare('SELECT * FROM items WHERE name LIKE ?').get(`%${name}%`) as any;
+      item = db.prepare("SELECT * FROM items WHERE name LIKE ? ESCAPE '\\'").get(`%${escapeLike(name)}%`) as any;
     }
 
     if (!item) return res.status(404).json({ error: 'Item not found' });
@@ -864,7 +907,8 @@ app.post('/api/ha/inventory/update', (req, res) => {
   }
 });
 
-app.post('/api/scan/mhd', async (req, res) => {
+app.post('/api/scan/mhd', largeBody, async (req, res) => {
+  if (!checkRateLimit(req.ip || 'unknown')) return res.status(429).json({ error: 'Rate limit exceeded. Try again in a minute.' });
   const { imageBase64 } = req.body;
   if (!imageBase64) return res.status(400).json({ error: 'No image provided' });
 
@@ -887,7 +931,8 @@ app.post('/api/scan/mhd', async (req, res) => {
   }
 });
 
-app.post('/api/scan', async (req, res) => {
+app.post('/api/scan', largeBody, async (req, res) => {
+  if (!checkRateLimit(req.ip || 'unknown')) return res.status(429).json({ error: 'Rate limit exceeded. Try again in a minute.' });
   const { imageBase64 } = req.body;
   if (!imageBase64) return res.status(400).json({ error: 'No image provided' });
 
@@ -915,7 +960,8 @@ app.post('/api/scan', async (req, res) => {
   }
 });
 
-app.post('/api/cook/analyze-photo', async (req, res) => {
+app.post('/api/cook/analyze-photo', largeBody, async (req, res) => {
+  if (!checkRateLimit(req.ip || 'unknown')) return res.status(429).json({ error: 'Rate limit exceeded. Try again in a minute.' });
   const { imageBase64 } = req.body;
   if (!imageBase64) return res.status(400).json({ error: 'No image provided' });
 
@@ -970,6 +1016,7 @@ app.post('/api/cook/analyze-photo', async (req, res) => {
 });
 
 app.post('/api/cook/ask-amounts', async (req, res) => {
+  if (!checkRateLimit(req.ip || 'unknown')) return res.status(429).json({ error: 'Rate limit exceeded. Try again in a minute.' });
   const { ingredients, portions } = req.body;
   try {
     const prompt = `
@@ -1007,8 +1054,9 @@ app.post('/api/cook/ask-amounts', async (req, res) => {
 });
 
 app.post('/api/cook/check-opened', async (req, res) => {
+  if (!checkRateLimit(req.ip || 'unknown')) return res.status(429).json({ error: 'Rate limit exceeded. Try again in a minute.' });
   const { deductions, recipeId } = req.body;
-  
+
   try {
     let itemsToCheck: any[] = [];
     
@@ -1029,7 +1077,7 @@ app.post('/api/cook/check-opened', async (req, res) => {
         }
         
         let remainingToDeduct = deductAmount;
-        const rows = db.prepare(`SELECT * FROM items WHERE LOWER(name) LIKE LOWER(?) OR LOWER(?) LIKE LOWER('%' || name || '%') ORDER BY is_open DESC, expiry_date ASC`).all(`%${ing.name}%`, ing.name) as any[];
+        const rows = db.prepare(`SELECT * FROM items WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(?) LIKE LOWER('%' || name || '%') ORDER BY is_open DESC, expiry_date ASC`).all(`%${escapeLike(ing.name)}%`, ing.name) as any[];
         
         for (const item of rows) {
           if (remainingToDeduct <= 0) break;
@@ -1194,6 +1242,7 @@ app.post('/api/cook/deduct', async (req, res) => {
 });
 
 app.post('/api/recipes/generate', async (req, res) => {
+  if (!checkRateLimit(req.ip || 'unknown')) return res.status(429).json({ error: 'Rate limit exceeded. Try again in a minute.' });
   const { preferences, portions, allowExtra = false, maxExtraItems = 0 } = req.body;
   try {
     const items = db.prepare('SELECT generic_name, name, quantity, unit, expiry_date, category FROM items').all();
@@ -1339,7 +1388,7 @@ app.put('/api/calendar/:id/cook', async (req, res) => {
         const smallestReq = convertToSmallestUnit(reqAmt, ing.unit);
         let remainingToDeduct = smallestReq.amount;
         
-        const rows = db.prepare(`SELECT * FROM items WHERE (LOWER(name) LIKE LOWER(?) OR LOWER(?) LIKE LOWER('%' || name || '%')) AND quantity > 0 ORDER BY is_open DESC, expiry_date ASC`).all(`%${ing.name}%`, ing.name) as any[];
+        const rows = db.prepare(`SELECT * FROM items WHERE (LOWER(name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(?) LIKE LOWER('%' || name || '%')) AND quantity > 0 ORDER BY is_open DESC, expiry_date ASC`).all(`%${escapeLike(ing.name)}%`, ing.name) as any[];
         
         const matchingRows = rows.filter(row => {
           const invSmallest = convertToSmallestUnit(row.quantity, row.unit);
@@ -1480,7 +1529,7 @@ app.post('/api/recipes/cook', (req, res) => {
   try {
     db.transaction(() => {
       for (const ing of usedIngredients) {
-        const item = db.prepare('SELECT * FROM items WHERE name LIKE ? LIMIT 1').get(`%${ing.name}%`) as any;
+        const item = db.prepare("SELECT * FROM items WHERE name LIKE ? ESCAPE '\\' LIMIT 1").get(`%${escapeLike(ing.name)}%`) as any;
         if (item) {
           if (item.quantity >= ing.amount) {
             const newQty = item.quantity - ing.amount;
@@ -1519,13 +1568,12 @@ app.get('/api/settings', (req, res) => {
 
     const merged = { ...defaults, ...result };
 
-    // Mask sensitive values — only show if set, never expose full key
-    const sensitiveKeys = ['ai_api_key', 'bring_password'];
+    // Mask sensitive values — never return partial values
+    const sensitiveKeys = ['ai_api_key', 'bring_password', 'bring_email'];
     for (const key of sensitiveKeys) {
       if (merged[key]) {
-        const val = merged[key];
         merged[key + '_set'] = true;
-        merged[key] = val.length > 8 ? val.slice(0, 4) + '••••' + val.slice(-4) : '••••••••';
+        merged[key] = '••••••••';
       }
     }
 
@@ -1537,13 +1585,13 @@ app.get('/api/settings', (req, res) => {
 
 app.post('/api/settings/bulk', (req, res) => {
   const { settings } = req.body;
-  console.log('Bulk settings update request:', settings);
   if (!settings) return res.status(400).json({ error: 'No settings provided' });
   try {
     const insert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
     const transaction = db.transaction((data) => {
       for (const [key, value] of Object.entries(data)) {
         if (value !== undefined && value !== null) {
+          if (!ALLOWED_SETTINGS.includes(key)) continue;
           insert.run(key, String(value));
         }
       }
@@ -1558,6 +1606,9 @@ app.post('/api/settings/bulk', (req, res) => {
 
 app.post('/api/settings', (req, res) => {
   const { key, value } = req.body;
+  if (!ALLOWED_SETTINGS.includes(key)) {
+    return res.status(400).json({ error: `Invalid setting key: ${key}` });
+  }
   try {
     db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
     res.json({ success: true });
@@ -1576,7 +1627,7 @@ app.post('/api/bring/add', async (req, res) => {
       return res.status(400).json({ error: 'Bring! credentials not configured in settings.' });
     }
 
-    console.log(`Adding to Bring list for ${emailRow.value}: `, items);
+    console.log(`Adding ${items.length} items to Bring list`);
     await new Promise(resolve => setTimeout(resolve, 1000));
     res.json({ success: true, message: `Added ${items.length} items to Bring!` });
   } catch (error) {
@@ -1613,17 +1664,17 @@ async function startServer() {
           const instructions = JSON.parse(r.instructions);
           recipeHtml += `
             <div class="recipe">
-              <h1>${r.title}</h1>
-              <p class="desc">${r.description || ''}</p>
-              <div class="meta">${r.portions} Portionen</div>
+              <h1>${escapeHtml(r.title)}</h1>
+              <p class="desc">${escapeHtml(r.description || '')}</p>
+              <div class="meta">${escapeHtml(String(r.portions))} Portionen</div>
               <div class="columns">
                 <div class="col">
                   <h2>Zutaten</h2>
-                  <ul>${ingredients.map((i: any) => `<li><span class="amount">${i.amount} ${i.unit}</span> ${i.name} ${i.in_inventory ? '<span class="ok">✓</span>' : '<span class="missing">✗</span>'}</li>`).join('')}</ul>
+                  <ul>${ingredients.map((i: any) => `<li><span class="amount">${escapeHtml(String(i.amount))} ${escapeHtml(i.unit)}</span> ${escapeHtml(i.name)} ${i.in_inventory ? '<span class="ok">&#x2713;</span>' : '<span class="missing">&#x2717;</span>'}</li>`).join('')}</ul>
                 </div>
                 <div class="col">
                   <h2>Zubereitung</h2>
-                  <ol>${instructions.map((s: string) => `<li>${s}</li>`).join('')}</ol>
+                  <ol>${instructions.map((s: string) => `<li>${escapeHtml(s)}</li>`).join('')}</ol>
                 </div>
               </div>
             </div>`;
@@ -1696,8 +1747,8 @@ async function startServer() {
 
   // HTTP on port 3001 for local iframe embedding (MagicMirror)
   const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3001');
-  http.createServer(app).listen(HTTP_PORT, '0.0.0.0', () => {
-    console.log(`HTTP server on http://0.0.0.0:${HTTP_PORT} (for local iframe embedding)`);
+  http.createServer(app).listen(HTTP_PORT, '127.0.0.1', () => {
+    console.log(`HTTP server on http://127.0.0.1:${HTTP_PORT} (for local iframe embedding)`);
   });
 }
 

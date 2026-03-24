@@ -44,8 +44,8 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-4 max-w-3xl mx-auto pb-24 space-y-6">
-      <header className="flex justify-between items-center mb-6 pt-4">
+    <div className="flex flex-col h-full p-4 max-w-5xl mx-auto pb-24">
+      <header className="flex justify-between items-center mb-4 pt-4 shrink-0">
         <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('dashboard.title')}</h1>
         <button onClick={() => navigate('/settings')} className="p-2 text-gray-500 hover:text-gray-900 bg-gray-100 rounded-full">
           <Settings size={20} />
@@ -53,41 +53,43 @@ export default function Dashboard() {
       </header>
 
       {/* Today's Meals */}
-      <section>
-        <div className="flex items-center gap-2 mb-3 text-emerald-700 font-semibold">
+      <section className="shrink-0 mb-4">
+        <div className="flex items-center gap-2 mb-2 text-emerald-700 font-semibold">
           <CalendarIcon size={20} />
           <h2>{t('dashboard.todayPlanned')}</h2>
         </div>
         {data?.todaysRecipes.length === 0 ? (
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center text-sm text-gray-500">
+          <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm text-center text-sm text-gray-500">
             {t('dashboard.nothingPlanned')}{' '}
             <Link to="/calendar" className="text-emerald-600 font-medium">{t('dashboard.toCalendar')}</Link>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {data?.todaysRecipes.map((recipe) => (
               <RecipeCard
                 key={recipe.id}
                 recipe={recipe}
                 onCook={() => navigate('/calendar')}
                 onBring={() => navigate('/shopping-list')}
+                compact
               />
             ))}
           </div>
         )}
       </section>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Two columns that fill remaining space */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 min-h-0">
         {/* Expiring Soon */}
-        <section className="bg-orange-50 border border-orange-100 rounded-2xl p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-3 text-orange-700 font-semibold">
+        <section className="bg-orange-50 border border-orange-100 rounded-2xl p-4 shadow-sm flex flex-col min-h-0">
+          <div className="flex items-center gap-2 mb-3 text-orange-700 font-semibold shrink-0">
             <AlertTriangle size={18} />
             <h2>{t('dashboard.expiringSoonTitle', { count: data?.expiringSoon.length })}</h2>
           </div>
           {data?.expiringSoon.length === 0 ? (
             <p className="text-sm text-orange-600/70">{t('dashboard.allGood')}</p>
           ) : (
-            <ul className="space-y-2 max-h-48 overflow-y-auto pr-2">
+            <ul className="space-y-2 overflow-y-auto flex-1 pr-1">
               {data?.expiringSoon.map((item) => (
                 <li key={item.id} className="text-sm flex justify-between bg-white/60 p-2 rounded-xl">
                   <span className="font-medium text-gray-800 truncate pr-2">{item.name}</span>
@@ -99,15 +101,15 @@ export default function Dashboard() {
         </section>
 
         {/* Opened Packages */}
-        <section className="bg-blue-50 border border-blue-100 rounded-2xl p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-3 text-blue-700 font-semibold">
+        <section className="bg-blue-50 border border-blue-100 rounded-2xl p-4 shadow-sm flex flex-col min-h-0">
+          <div className="flex items-center gap-2 mb-3 text-blue-700 font-semibold shrink-0">
             <PackageOpen size={18} />
             <h2>{t('dashboard.openedPackagesTitle', { count: data?.openedItems.length })}</h2>
           </div>
           {data?.openedItems.length === 0 ? (
             <p className="text-sm text-blue-600/70">{t('dashboard.noOpenedPackages')}</p>
           ) : (
-            <ul className="space-y-2 max-h-48 overflow-y-auto pr-2">
+            <ul className="space-y-2 overflow-y-auto flex-1 pr-1">
               {data?.openedItems.map((item) => (
                 <li key={item.id} className="text-sm flex justify-between bg-white/60 p-2 rounded-xl">
                   <span className="font-medium text-gray-800 truncate pr-2">{item.name}</span>
@@ -118,7 +120,6 @@ export default function Dashboard() {
           )}
         </section>
       </div>
-
     </div>
   );
 }

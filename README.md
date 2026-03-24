@@ -14,6 +14,11 @@ FoodAI is a self-hosted, AI-first kitchen inventory manager. It combines barcode
 
 ---
 
+## ⚠️ Security Notice
+FoodAI has **no built-in authentication**. It is designed for trusted local networks only. Do NOT expose it to the public internet without adding a reverse proxy with authentication (e.g., Authelia, Authentik, or HTTP Basic Auth via Caddy/nginx).
+
+---
+
 ## ✨ Core Pillars
 
 ### 📸 Zero-Friction Inventory
