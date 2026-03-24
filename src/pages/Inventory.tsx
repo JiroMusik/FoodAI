@@ -611,7 +611,6 @@ export default function Inventory() {
         )}
       </AnimatePresence>
 
-      <Navigation />
     </div>
   );
 }
