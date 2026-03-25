@@ -262,6 +262,7 @@
     "theme": "Design",
     "themeLight": "Hell",
     "themeDark": "Dunkel",
+    "themeAuto": "Auto",
     "themeCustom": "Eigenes",
     "uploadCss": "CSS-Datei hochladen",
     "customCssLoaded": "CSS geladen",

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { Save, Cpu, Key, Globe, Languages, Palette, Upload, Sun, Moon } from 'lucide-react';
+import { Save, Cpu, Key, Globe, Languages, Palette, Upload, Sun, Moon, Monitor } from 'lucide-react';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -29,13 +29,18 @@ export default function Settings() {
   const [theme, setTheme] = useState(() => localStorage.getItem('foodai-theme') || 'light');
   const [customCss, setCustomCss] = useState(() => localStorage.getItem('foodai-custom-css') || '');
 
+  const getSystemTheme = () => window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+
   const applyTheme = (newTheme: string) => {
     setTheme(newTheme);
     localStorage.setItem('foodai-theme', newTheme);
     document.documentElement.classList.remove('light', 'dark');
-    if (newTheme === 'dark') {
+
+    const effectiveTheme = newTheme === 'auto' ? getSystemTheme() : newTheme;
+    if (effectiveTheme === 'dark') {
       document.documentElement.classList.add('dark');
     }
+
     // Apply/remove custom CSS
     let styleEl = document.getElementById('foodai-custom-css');
     if (newTheme === 'custom' && customCss) {
@@ -49,6 +54,14 @@ export default function Settings() {
       styleEl.remove();
     }
   };
+
+  // Listen for system theme changes when in auto mode
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = () => { if (theme === 'auto') applyTheme('auto'); };
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [theme]);
 
   const handleCustomCssUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -178,6 +191,7 @@ export default function Settings() {
             {[
               { id: 'light', icon: Sun, label: t('settings.themeLight') },
               { id: 'dark', icon: Moon, label: t('settings.themeDark') },
+              { id: 'auto', icon: Monitor, label: t('settings.themeAuto') },
               { id: 'custom', icon: Palette, label: t('settings.themeCustom') },
             ].map(opt => (
               <button

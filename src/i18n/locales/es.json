@@ -257,6 +257,7 @@
     "theme": "Tema",
     "themeLight": "Claro",
     "themeDark": "Oscuro",
+    "themeAuto": "Auto",
     "themeCustom": "Personalizado",
     "uploadCss": "Subir archivo CSS",
     "customCssLoaded": "CSS cargado",

@@ -6,7 +6,10 @@ import './index.css';
 
 // Apply saved theme immediately (before React renders)
 const savedTheme = localStorage.getItem('foodai-theme') || 'light';
-if (savedTheme === 'dark') {
+const effectiveTheme = savedTheme === 'auto'
+  ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  : savedTheme;
+if (effectiveTheme === 'dark') {
   document.documentElement.classList.add('dark');
 }
 if (savedTheme === 'custom') {
