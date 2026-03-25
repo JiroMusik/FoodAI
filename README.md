@@ -49,6 +49,13 @@ Built for the modern kitchen. Fully installable **Progressive Web App** with smo
 - **Mirror Display** — Dark-themed `/mirror/today` endpoint for smart mirror embedding
 - **Multi-Language** — German, English, Spanish (more via community contributions)
 - **Multi-AI Provider** — Switch providers in-app, no restart needed
+- **Dark/Light/Custom Theme** — Switch between Light, Dark, and Custom themes in Settings. Custom theme supports uploading a CSS file.
+- **Per-Item Price Tracking** — Each inventory item can have a price (EUR). Dashboard shows total stock value.
+- **Storage Location** — Assign items to Vorratsschrank, Kuehlschrank, Gefrierschrank, Speisekammer, or Keller.
+- **Minimum Stock Warnings** — Set a min_stock threshold per item. Dashboard shows low-stock count.
+- **RSS Food Inspiration** — Dashboard sidebar shows daily recipe ideas from GuteKueche.de (DE) or BBC Good Food (EN), with TheMealDB fallback.
+- **Live AI Model List** — Settings dropdown fetches available models from the provider's API (Gemini, OpenAI, Anthropic, DeepSeek, Moonshot, Ollama).
+- **Security Improvements** — Rate limiting on AI endpoints, XSS protection, SSRF validation, masked secrets, non-root Docker container.
 
 ---
 

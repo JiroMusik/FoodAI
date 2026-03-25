@@ -25,6 +25,13 @@ Ein selbst gehosteter Kücheninventar-Manager mit KI-gestütztem Barcode-Scannin
 - **Spiegelanzeige** -- Ein eigenständiger `/mirror/today`-Endpunkt im dunklen Design, der das heutige Rezept anzeigt -- geeignet zum Einbetten auf einem Smart Mirror oder Tablet.
 - **Multi-KI-Anbieter** -- Wechsle zwischen Gemini, OpenAI, Anthropic, DeepSeek, Moonshot oder Ollama (lokal) direkt in den Einstellungen.
 - **PWA** -- Installierbar als Progressive Web App auf Mobilgeräten.
+- **Dark/Light/Custom Theme** -- Wechsle zwischen hellem, dunklem und benutzerdefiniertem Design in den Einstellungen. Das benutzerdefinierte Theme unterstützt den Upload einer CSS-Datei.
+- **Preisverfolgung pro Artikel** -- Jeder Inventarartikel kann einen Preis (EUR) haben. Das Dashboard zeigt den gesamten Lagerwert an.
+- **Lagerort** -- Weise Artikeln einen Lagerort zu: Vorratsschrank, Kühlschrank, Gefrierschrank, Speisekammer oder Keller.
+- **Mindestbestandswarnungen** -- Lege einen Mindestbestand pro Artikel fest. Das Dashboard zeigt die Anzahl der Artikel mit niedrigem Bestand an.
+- **RSS-Kochinspiration** -- Die Dashboard-Seitenleiste zeigt tägliche Rezeptideen von GuteKueche.de (DE) oder BBC Good Food (EN), mit TheMealDB als Fallback.
+- **Live-KI-Modellliste** -- Das Dropdown in den Einstellungen ruft verfügbare Modelle von der API des Anbieters ab (Gemini, OpenAI, Anthropic, DeepSeek, Moonshot, Ollama).
+- **Sicherheitsverbesserungen** -- Rate-Limiting auf KI-Endpunkten, XSS-Schutz, SSRF-Validierung, maskierte Geheimnisse, Non-Root-Docker-Container.
 
 ## Screenshots
 

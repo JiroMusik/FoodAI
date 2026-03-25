@@ -25,6 +25,13 @@ Un gestore di inventario cucina self-hosted con scansione di codici a barre tram
 - **Display specchio** -- Un endpoint autonomo `/mirror/today` con tema scuro che mostra la ricetta del giorno, adatto per l'integrazione su uno specchio intelligente o tablet.
 - **Supporto multi-provider IA** -- Passa tra Gemini, OpenAI, Anthropic, DeepSeek, Moonshot o Ollama (locale) direttamente nella pagina Impostazioni.
 - **PWA** -- Installabile come Progressive Web App su dispositivi mobili.
+- **Tema Scuro/Chiaro/Personalizzato** -- Passa tra i temi Chiaro, Scuro e Personalizzato nelle Impostazioni. Il tema personalizzato supporta il caricamento di un file CSS.
+- **Tracciamento prezzi per articolo** -- Ogni articolo dell'inventario puo avere un prezzo (EUR). La dashboard mostra il valore totale delle scorte.
+- **Posizione di stoccaggio** -- Assegna gli articoli a dispensa, frigorifero, congelatore, cambusa o cantina.
+- **Avvisi scorta minima** -- Imposta una soglia di scorta minima per articolo. La dashboard mostra il conteggio degli articoli con scorte basse.
+- **Ispirazione culinaria RSS** -- La barra laterale della dashboard mostra idee di ricette giornaliere da GuteKueche.de (DE) o BBC Good Food (EN), con TheMealDB come fallback.
+- **Lista modelli IA in tempo reale** -- Il menu a tendina nelle Impostazioni recupera i modelli disponibili dall'API del fornitore (Gemini, OpenAI, Anthropic, DeepSeek, Moonshot, Ollama).
+- **Miglioramenti di sicurezza** -- Limitazione della frequenza sugli endpoint IA, protezione XSS, validazione SSRF, segreti mascherati, container Docker non-root.
 
 ## Screenshot
 
