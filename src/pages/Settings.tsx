@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { Save, Cpu, Key, Globe, Languages } from 'lucide-react';
+import { Save, Cpu, Key, Globe, Languages, Palette, Upload, Sun, Moon } from 'lucide-react';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -26,6 +26,45 @@ export default function Settings() {
     ollama_url: 'http://localhost:11434'
   });
   const [loading, setLoading] = useState(true);
+  const [theme, setTheme] = useState(() => localStorage.getItem('foodai-theme') || 'light');
+  const [customCss, setCustomCss] = useState(() => localStorage.getItem('foodai-custom-css') || '');
+
+  const applyTheme = (newTheme: string) => {
+    setTheme(newTheme);
+    localStorage.setItem('foodai-theme', newTheme);
+    document.documentElement.classList.remove('light', 'dark');
+    if (newTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+    }
+    // Apply/remove custom CSS
+    let styleEl = document.getElementById('foodai-custom-css');
+    if (newTheme === 'custom' && customCss) {
+      if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = 'foodai-custom-css';
+        document.head.appendChild(styleEl);
+      }
+      styleEl.textContent = customCss;
+    } else if (styleEl) {
+      styleEl.remove();
+    }
+  };
+
+  const handleCustomCssUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const css = ev.target?.result as string;
+      setCustomCss(css);
+      localStorage.setItem('foodai-custom-css', css);
+      if (theme === 'custom') applyTheme('custom');
+      toast.success(t('settings.customCssLoaded'));
+    };
+    reader.readAsText(file);
+  };
+
+  useEffect(() => { applyTheme(theme); }, []);
 
   useEffect(() => {
     fetchSettings();
@@ -124,6 +163,50 @@ export default function Settings() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Theme */}
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 dark:bg-gray-900 dark:border-gray-800">
+          <h2 className="text-lg font-semibold mb-6 flex items-center">
+            <span className="bg-purple-100 text-purple-600 p-2 rounded-lg mr-3">
+              <Palette size={20} />
+            </span>
+            {t('settings.theme')}
+          </h2>
+
+          <div className="flex gap-3 mb-4">
+            {[
+              { id: 'light', icon: Sun, label: t('settings.themeLight') },
+              { id: 'dark', icon: Moon, label: t('settings.themeDark') },
+              { id: 'custom', icon: Palette, label: t('settings.themeCustom') },
+            ].map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => applyTheme(opt.id)}
+                className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                  theme === opt.id
+                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-100'
+                    : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                }`}
+              >
+                <opt.icon size={16} />
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {theme === 'custom' && (
+            <div className="space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer bg-gray-50 border border-dashed border-gray-300 rounded-xl p-4 hover:bg-gray-100 transition-colors">
+                <Upload size={18} className="text-gray-400" />
+                <span className="text-sm text-gray-600 font-medium">{t('settings.uploadCss')}</span>
+                <input type="file" accept=".css" onChange={handleCustomCssUpload} className="hidden" />
+              </label>
+              {customCss && (
+                <p className="text-xs text-gray-400">{t('settings.customCssActive', { size: customCss.length })}</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* AI Configuration */}

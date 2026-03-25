@@ -253,7 +253,14 @@
     "language": "Language",
     "languageDE": "Deutsch",
     "languageEN": "English",
-    "languageES": "Espanol"
+    "languageES": "Espanol",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeCustom": "Custom",
+    "uploadCss": "Upload CSS file",
+    "customCssLoaded": "CSS loaded",
+    "customCssActive": "Custom CSS active ({{size}} characters)"
   },
   "shopping": {
     "title": "Shopping List",
