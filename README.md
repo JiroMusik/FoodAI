@@ -1,7 +1,7 @@
 🌍 [English](README.md) | [Deutsch](README_DE.md) | [Français](README_FR.md) | [Español](README_ES.md) | [Italiano](README_IT.md)
 
 <div align="center">
-<img src="foodai_banner.png" alt="FoodAI Banner" width="100%" />
+<img src="docs/images/social-preview.png" alt="FoodAI Banner" width="100%" />
 </div>
 
 # 🍎 FoodAI
@@ -65,10 +65,10 @@ All configurable in the Settings page — API key, model selection, separate adv
 
 | Provider | Notes |
 |----------|-------|
-| Google Gemini | Any model (e.g. Gemini 2.5 Flash/Pro). Enter model ID in Settings. |
-| OpenAI | Any model (e.g. GPT-4o, o1). Enter model ID in Settings. |
-| Anthropic | Any model (e.g. Claude Opus 4.6, Sonnet). Enter model ID in Settings. |
-| DeepSeek | Any model (e.g. deepseek-chat). Enter model ID in Settings. |
+| Google Gemini | Any model (e.g. Gemini 3.1 Pro, 2.5 Flash). Enter model ID in Settings. |
+| OpenAI | Any model (e.g. GPT-4.1, o3, o4-mini). Enter model ID in Settings. |
+| Anthropic | Any model (e.g. Claude Opus 4.6, Sonnet 4.6). Enter model ID in Settings. |
+| DeepSeek | Any model (e.g. deepseek-chat, deepseek-reasoner). Enter model ID in Settings. |
 | Moonshot (Kimi) | Any model. Enter model ID in Settings. |
 | Ollama (local) | Any locally pulled model (llama3, mistral, llava, etc.) |
 
