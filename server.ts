@@ -1666,10 +1666,13 @@ app.post('/api/settings/bulk', (req, res) => {
   if (!settings) return res.status(400).json({ error: 'No settings provided' });
   try {
     const insert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    const SENSITIVE_KEYS = ['ai_api_key', 'bring_password', 'bring_email'];
     const transaction = db.transaction((data) => {
       for (const [key, value] of Object.entries(data)) {
         if (value !== undefined && value !== null) {
           if (!ALLOWED_SETTINGS.includes(key)) continue;
+          // Skip masked values — don't overwrite real secrets with ••••••••
+          if (SENSITIVE_KEYS.includes(key) && String(value).includes('••••')) continue;
           insert.run(key, String(value));
         }
       }
