@@ -1,7 +1,7 @@
 🌍 [English](README.md) | [Deutsch](README_DE.md) | [Français](README_FR.md) | [Español](README_ES.md) | [Italiano](README_IT.md)
 
 <div align="center">
-<img src="docs/images/social-preview.png" alt="FoodAI Banner" width="100%" />
+<img src="foodai_banner.png" alt="FoodAI Banner" width="100%" />
 </div>
 
 # 🍎 FoodAI
