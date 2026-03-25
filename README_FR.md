@@ -8,6 +8,15 @@
 
 Un gestionnaire d'inventaire de cuisine auto-hébergé avec scan de codes-barres par IA, génération de recettes et planification de repas. Construit avec React, Express et SQLite.
 
+[![PayPal](https://img.shields.io/badge/PayPal-Don-blue?logo=paypal)](https://www.paypal.com/paypalme/germanquestions)
+
+---
+
+## Avis de securite
+FoodAI n'a **pas d'authentification integree**. Il est concu uniquement pour les reseaux locaux de confiance. Ne l'exposez PAS a l'internet public sans ajouter un reverse proxy avec authentification (par ex. Authelia, Authentik ou HTTP Basic Auth via Caddy/nginx).
+
+---
+
 ## Fonctionnalités
 
 - **Scanner de codes-barres** -- Scannez les codes-barres EAN/UPC avec l'appareil photo de votre téléphone. Les produits sont recherchés via OpenFoodFacts et UPCItemDB, puis mis en cache localement.
@@ -54,14 +63,14 @@ Un gestionnaire d'inventaire de cuisine auto-hébergé avec scan de codes-barres
 
 Tous les fournisseurs sont configurables dans la page Paramètres de l'application. Vous pouvez définir la clé API, sélectionner les modèles et choisir des modèles distincts pour l'IA principale (recettes, scan) et l'IA conseillère (estimation des quantités, vérifications de péremption).
 
-| Fournisseur | Modèles exemples |
-|-------------|-----------------|
-| Google Gemini | gemini-3-flash-preview, gemini-1.5-pro |
-| OpenAI | gpt-4o, gpt-4o-mini |
-| Anthropic | claude-3-5-sonnet-latest, claude-3-haiku |
-| DeepSeek | deepseek-chat, deepseek-coder |
-| Moonshot (Kimi) | moonshot-v1-8k, moonshot-v1-128k |
-| Ollama (local) | llama3, mistral, llava (tout modèle que vous avez téléchargé) |
+| Fournisseur | Notes |
+|-------------|-------|
+| Google Gemini | N'importe quel modele (ex. Gemini 2.5 Flash/Pro). Entrez l'ID du modele dans les Parametres. |
+| OpenAI | N'importe quel modele (ex. GPT-4o, o1). Entrez l'ID du modele dans les Parametres. |
+| Anthropic | N'importe quel modele (ex. Claude Opus 4.6, Sonnet). Entrez l'ID du modele dans les Parametres. |
+| DeepSeek | N'importe quel modele (ex. deepseek-chat). Entrez l'ID du modele dans les Parametres. |
+| Moonshot (Kimi) | N'importe quel modele. Entrez l'ID du modele dans les Parametres. |
+| Ollama (local) | N'importe quel modele telecharge localement (llama3, mistral, llava, etc.) |
 
 ## Démarrage
 
@@ -97,41 +106,38 @@ npm run build    # Compile le frontend dans dist/
 npm start        # Démarre le serveur de production
 ```
 
-## Déploiement Docker
+## Deploiement Docker
 
-Un `Dockerfile` et un `docker-compose.yml` sont inclus pour un déploiement auto-hébergé facile.
-
-```bash
-# Compiler d'abord le frontend
-npm run build
-
-# Construire et démarrer avec Docker Compose
-docker compose up -d
-```
-
-Le `docker-compose.yml` expose :
-- Port **3099** -> HTTPS (3000 dans le conteneur)
-- Port **3098** -> HTTP (3001 dans le conteneur)
-
-Les données sont conservées dans le volume Docker `foodai-data`.
+Des images multi-arch preconstruites (amd64 + arm64) sont publiees dans le GitHub Container Registry a chaque release.
 
 ```yaml
 services:
   foodai:
-    build: .
+    image: ghcr.io/jiromusik/foodai:latest
     container_name: foodai
     restart: unless-stopped
     ports:
-      - "3099:3000"
-      - "3098:3001"
+      - "3000:3000"
     volumes:
       - foodai-data:/app/data
+    env_file:
+      - .env
     environment:
       - DB_DIR=/app/data
       - NODE_ENV=production
 
 volumes:
   foodai-data:
+```
+
+### HTTPS
+
+FoodAI necessite HTTPS pour l'acces a la camera sur mobile. Un certificat auto-signe est genere automatiquement au premier demarrage. Acceptez l'avertissement du navigateur une fois, ou montez vos propres certificats :
+
+```yaml
+volumes:
+  - ./certs/cert.pem:/app/data/server.cert:ro
+  - ./certs/key.pem:/app/data/server.key:ro
 ```
 
 ## Variables d'environnement
@@ -166,12 +172,30 @@ src/
     OpenedItemsModal.tsx Modal pour les ajustements de péremption des articles ouverts
 ```
 
-## Soutien
+## Contribuer des traductions
 
-Si vous trouvez ce projet utile, offrez-moi un café :
+FoodAI utilise [react-i18next](https://react.i18next.com/). Les fichiers de traduction se trouvent dans `src/i18n/locales/`.
 
-[![PayPal](https://img.shields.io/badge/PayPal-Don-blue?logo=paypal)](https://www.paypal.com/paypalme/germanquestions)
+Pour ajouter une nouvelle langue :
+
+1. Copiez `src/i18n/locales/en.json` vers `src/i18n/locales/xx.json`
+2. Traduisez toutes les valeurs (gardez les cles en anglais)
+3. Ajoutez l'import dans `src/i18n/i18n.ts`
+4. Ajoutez l'option de langue dans `src/pages/Settings.tsx`
+5. Soumettez une PR !
+
+---
 
 ## Licence
 
-Apache-2.0
+Apache-2.0 — voir [LICENSE](LICENSE)
+
+---
+
+<div align="center">
+
+**Built with ❤️ and AI by [N3LSON](https://nnelson.de/)**
+
+[![PayPal](https://img.shields.io/badge/Buy_me_a_coffee-PayPal-blue?logo=paypal)](https://www.paypal.com/paypalme/germanquestions)
+
+</div>
