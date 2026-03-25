@@ -84,7 +84,7 @@ export default function Dashboard() {
       <div className="flex flex-1 gap-4 min-h-0 max-w-7xl mx-auto w-full">
 
         {/* Left: RSS Feed Inspiration */}
-        <aside className="hidden lg:flex flex-col w-72 shrink-0 min-h-0">
+        <aside className="flex flex-col w-72 shrink-0 min-h-0 max-lg:hidden">
           <div className="flex items-center gap-2 mb-3 text-emerald-700 font-semibold">
             <Sparkles size={18} />
             <h2 className="text-sm uppercase tracking-widest">{t('dashboard.inspiration')}</h2>
@@ -93,7 +93,7 @@ export default function Dashboard() {
             {feedItems.length === 0 ? (
               <div className="text-sm text-gray-400 text-center py-8">{t('common.loading')}</div>
             ) : (
-              feedItems.map((item, idx) => (
+              feedItems.filter(item => item.image).slice(0, 3).map((item, idx) => (
                 <a key={idx} href={item.link} target="_blank" rel="noopener noreferrer"
                   className="block bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden hover:border-emerald-200 hover:shadow-md transition-all group">
                   {item.image && (
@@ -187,18 +187,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Mobile: Feed as horizontal scroll below main content */}
-        <div className="lg:hidden fixed bottom-16 left-0 right-0 bg-white/90 backdrop-blur border-t border-gray-100 px-4 py-2" style={{display: feedItems.length > 0 ? 'block' : 'none'}}>
-          <div className="flex gap-3 overflow-x-auto snap-x pb-1">
-            {feedItems.slice(0, 4).map((item, idx) => (
-              <a key={idx} href={item.link} target="_blank" rel="noopener noreferrer"
-                className="flex-shrink-0 w-40 snap-start bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                {item.image && <img src={item.image} alt={item.title} className="w-full h-20 object-cover" />}
-                <p className="p-2 text-xs font-bold text-gray-800 line-clamp-2">{item.title}</p>
-              </a>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );

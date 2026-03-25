@@ -1746,39 +1746,51 @@ app.get('/api/feed/inspiration', async (req, res) => {
       return res.json(feedCache.items);
     }
 
-    const feedUrl = lang === 'de'
-      ? 'https://www.gutekueche.de/feed/tagesrezept'
-      : 'https://www.bbcgoodfood.com/feed';
+    // Try multiple RSS feeds for more items
+    const feedUrls = lang === 'de'
+      ? ['https://www.gutekueche.de/feed/tagesrezept', 'https://www.gutekueche.de/feed/wochenrezepte']
+      : ['https://www.bbcgoodfood.com/feed'];
 
     let items: any[] = [];
-    try {
-      const feed = await rssParser.parseURL(feedUrl);
-      items = feed.items.slice(0, 6).map(item => ({
-        title: item.title || '',
-        link: item.link || '',
-        image: extractImage(item),
-        pubDate: item.pubDate || '',
-        snippet: (item.contentSnippet || '').slice(0, 150),
-      }));
-    } catch (e) {
-      // Fallback: TheMealDB random
-      for (let i = 0; i < 3; i++) {
-        try {
-          const r = await fetch('https://www.themealdb.com/api/json/v1/1/random.php');
-          const data = await r.json();
-          const meal = data.meals?.[0];
-          if (meal) {
-            items.push({
-              title: meal.strMeal,
-              link: `https://www.themealdb.com/meal/${meal.idMeal}`,
-              image: meal.strMealThumb,
-              pubDate: new Date().toISOString(),
-              snippet: meal.strCategory + ' · ' + meal.strArea,
-            });
-          }
-        } catch {}
+    for (const feedUrl of feedUrls) {
+      try {
+        const feed = await rssParser.parseURL(feedUrl);
+        const newItems = feed.items.slice(0, 6).map(item => ({
+          title: item.title || '',
+          link: item.link || '',
+          image: extractImage(item),
+          pubDate: item.pubDate || '',
+          snippet: (item.contentSnippet || '').slice(0, 150),
+        }));
+        items.push(...newItems);
+      } catch (e) {
+        console.error('RSS fetch error:', e);
       }
+      if (items.length >= 6) break;
     }
+
+    // Deduplicate by title
+    items = items.filter((item, idx, arr) => arr.findIndex(i => i.title === item.title) === idx);
+
+    // Fill up to 3 with TheMealDB if needed
+    while (items.length < 3) {
+      try {
+        const r = await fetch('https://www.themealdb.com/api/json/v1/1/random.php');
+        const data = await r.json();
+        const meal = data.meals?.[0];
+        if (meal && !items.some(i => i.title === meal.strMeal)) {
+          items.push({
+            title: meal.strMeal,
+            link: 'https://www.themealdb.com/meal/' + meal.idMeal,
+            image: meal.strMealThumb,
+            pubDate: new Date().toISOString(),
+            snippet: meal.strCategory + ' · ' + meal.strArea,
+          });
+        }
+      } catch { break; }
+    }
+
+    items = items.slice(0, 6);
 
     feedCache = { items, fetchedAt: now, lang };
     res.json(items);
