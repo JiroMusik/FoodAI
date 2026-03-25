@@ -67,7 +67,7 @@ const mapCategory = (rawCategory: string, productName: string): string => {
   // Backwaren
   if (text.match(/bread|bakery|pastry|brot|brötchen|toast|kuchen|croissant|baguette|semmel|lauge|donut|muffin|teig|blätterteig|pizzateig|brioche|bun\b|hotdog.*roll|hotdog.*brød|sandwich|wrap|tortilla/)) return 'Backwaren';
   // Obst & Gemüse
-  if (text.match(/fruit|vegetable|obst|gemüse|apple|banana|tomato|potato|apfel|banane|tomate|kartoffel|gurke|paprika|zwiebel\b|knoblauch\b|ingwer|salat|beere|pilz|champignon|karotte|möhre|brokkoli|zucchini/)) return 'Obst & Gemüse';
+  if (text.match(/fruit|vegetable|obst|gemüse|apple|banana|tomato|potato|apfel|banane|tomate|kartoffel|gurke|paprika|zwiebel\b|knoblauch\b|ingwer|salat|beere|pilz|champignon|karotte|möhre|brokkoli|zucchini|schalott|scharlott/)) return 'Obst & Gemüse';
   // Getränke
   if (text.match(/beverage|drink|water|juice|getränk|wasser|saft|cola|beer|wine|bier|wein|limonade|sprudel|kaffee|tee|milch.*drink/)) return 'Getränke';
   // Snacks & Süßigkeiten
