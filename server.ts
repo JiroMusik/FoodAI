@@ -65,7 +65,7 @@ const mapCategory = (rawCategory: string, productName: string): string => {
   // Fleisch & Fisch (nach Gewürze — damit "Rinder Bouillon" nicht hier landet)
   if (text.match(/meat|poultry|beef|pork|chicken|fleisch|hähnchen|wurst|würstchen|dörffler|schinken|salami|lachs|thunfisch|garnele|hack\b|rind.*steak|rind.*filet|rind.*roast|schwein|pute|truthahn|shrimp|pangasius|forelle|fish.*filet|fisch.*stäbchen/)) return 'Fleisch & Fisch';
   // Backwaren
-  if (text.match(/bread|bakery|pastry|brot|brötchen|toast|kuchen|croissant|baguette|semmel|lauge|donut|muffin|teig|blätterteig|pizzateig/)) return 'Backwaren';
+  if (text.match(/bread|bakery|pastry|brot|brötchen|toast|kuchen|croissant|baguette|semmel|lauge|donut|muffin|teig|blätterteig|pizzateig|brioche|bun\b|hotdog.*roll|hotdog.*brød|sandwich|wrap|tortilla/)) return 'Backwaren';
   // Obst & Gemüse
   if (text.match(/fruit|vegetable|obst|gemüse|apple|banana|tomato|potato|apfel|banane|tomate|kartoffel|gurke|paprika|zwiebel\b|knoblauch\b|ingwer|salat|beere|pilz|champignon|karotte|möhre|brokkoli|zucchini/)) return 'Obst & Gemüse';
   // Getränke
@@ -75,7 +75,7 @@ const mapCategory = (rawCategory: string, productName: string): string => {
   // Haushalt & Drogerie
   if (text.match(/cleaning|hygiene|paper|household|haushalt|drogerie|seife|shampoo|waschmittel|spülmittel|papier|beutel|folie|schwamm/)) return 'Haushalt & Drogerie';
   // Vorratsschrank (Fallback für alles was lange hält)
-  if (text.match(/pasta|rice|cereal|flour|sugar|noodle|reis|mehl|zucker|konserve|dose|canned|passierte tomaten|gehackte tomaten|tomatenmark|haferflocken|müsli|nudeln|spaghetti/)) return 'Vorratsschrank';
+  if (text.match(/pasta|rice|cereal|flour|sugar|noodle|reis|mehl|zucker|konserve|dose|canned|passierte tomaten|gehackte tomaten|tomatenmark|haferflocken|müsli|nudeln|spaghetti|spaghettoni|makkaroni|hörnchen|lasagne|penne|fusilli|linse|bohne|kidney|erbse|rotkohl|honig|blütenhonig|artischock|puder.*zucker|risi.*bisi/)) return 'Vorratsschrank';
   
   return 'Sonstiges';
 };
@@ -184,6 +184,9 @@ const initDB = () => {
 
     // Ensure package_size is set
     db.prepare("UPDATE items SET package_size = quantity WHERE package_size IS NULL OR package_size = 0").run();
+
+    // Fix "null" strings in expiry_date
+    db.prepare("UPDATE items SET expiry_date = NULL WHERE expiry_date = 'null' OR expiry_date = 'undefined' OR expiry_date = ''").run();
 
     // Category migration
     const updates = [
@@ -832,9 +835,12 @@ app.post('/api/inventory', (req, res) => {
         .run(barcode, name, generic_name || name, category, quantity, unit, pieces_per_pack || 1, location, price, min_stock);
     }
 
+    // Sanitize expiry_date — AI sometimes returns "null" string
+    const cleanExpiry = (expiry_date && expiry_date !== 'null' && expiry_date !== 'undefined') ? expiry_date : null;
+
     // Always create a new item — each physical package is its own row
     const stmt = db.prepare('INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open, location, price, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)');
-    const info = stmt.run(name, generic_name || name, quantity, unit, expiry_date, category, barcode, pieces_per_pack || 1, quantity, location || 'Vorratsschrank', price || 0, min_stock || 0);
+    const info = stmt.run(name, generic_name || name, quantity, unit, cleanExpiry, category, barcode, pieces_per_pack || 1, quantity, location || 'Vorratsschrank', price || 0, min_stock || 0);
     res.json({ id: info.lastInsertRowid, name, generic_name: generic_name || name, quantity, unit, expiry_date, category, barcode, package_size: quantity, location: location || 'Vorratsschrank', price, min_stock });
   } catch (error) {
     console.error('Inventory add error:', error);
