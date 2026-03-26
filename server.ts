@@ -1054,7 +1054,9 @@ app.post('/api/cook/check-opened', async (req, res) => {
         }
         
         let remainingToDeduct = deductAmount;
-        const rows = db.prepare(`SELECT * FROM items WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(?) LIKE LOWER('%' || name || '%') ORDER BY is_open DESC, expiry_date ASC`).all(`%${escapeLike(ing.name)}%`, ing.name) as any[];
+        // Use canonical alias matching
+        const allInv = db.prepare('SELECT * FROM items ORDER BY is_open DESC, expiry_date ASC').all() as any[];
+        const rows = allInv.filter(inv => isIngredientInInventory(ing.name, [inv]));
         
         for (const item of rows) {
           if (remainingToDeduct <= 0) break;
@@ -1372,8 +1374,10 @@ app.put('/api/calendar/:id/cook', async (req, res) => {
         const smallestReq = convertToSmallestUnit(reqAmt, ing.unit);
         let remainingToDeduct = smallestReq.amount;
         
-        const rows = db.prepare(`SELECT * FROM items WHERE (LOWER(name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(?) LIKE LOWER('%' || name || '%')) AND quantity > 0 ORDER BY is_open DESC, expiry_date ASC`).all(`%${escapeLike(ing.name)}%`, ing.name) as any[];
-        
+        // Use canonical alias matching (same as recipe ingredient checking)
+        const allInvItems = db.prepare('SELECT * FROM items WHERE quantity > 0 ORDER BY is_open DESC, expiry_date ASC').all() as any[];
+        const rows = allInvItems.filter(inv => isIngredientInInventory(ing.name, [inv]));
+
         const matchingRows = rows.filter(row => {
           const invSmallest = convertToSmallestUnit(row.quantity, row.unit);
           return invSmallest.unit === smallestReq.unit;
@@ -1787,18 +1791,23 @@ app.post('/api/recipes/cook', (req, res) => {
   const missing: string[] = [];
 
   try {
+    const allItems = db.prepare('SELECT * FROM items WHERE quantity > 0').all() as any[];
+
     db.transaction(() => {
       for (const ing of usedIngredients) {
-        const item = db.prepare("SELECT * FROM items WHERE name LIKE ? ESCAPE '\\' LIMIT 1").get(`%${escapeLike(ing.name)}%`) as any;
+        // Use canonical alias matching (same as recipe ingredient checking)
+        const item = allItems.find(inv => isIngredientInInventory(ing.name, [inv]));
         if (item) {
           if (item.quantity >= ing.amount) {
             const newQty = item.quantity - ing.amount;
             db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
+            item.quantity = newQty; // update in-memory for subsequent matches
             deducted.push({ ...item, quantity_deducted: ing.amount });
           } else {
             db.prepare('UPDATE items SET quantity = 0 WHERE id = ?').run(item.id);
             deducted.push({ ...item, quantity_deducted: item.quantity });
             missing.push(`${ing.name} (Fehlt: ${ing.amount - item.quantity} ${ing.unit || item.unit || ''})`.trim());
+            item.quantity = 0;
           }
         } else {
           missing.push(ing.name);
