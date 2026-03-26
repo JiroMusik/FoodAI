@@ -222,6 +222,66 @@ app.get('/api/settings/models', async (req, res) => {
   }
 });
 
+// Image model list with recommended markers
+const RECOMMENDED_IMAGE_MODELS = new Set(['gpt-image-1.5', 'imagen-4.0-generate-001', 'sd3.5-large', 'gemini-2.5-flash-image']);
+
+app.get('/api/settings/image-models', async (req, res) => {
+  try {
+    const provider = (db.prepare('SELECT value FROM settings WHERE key = ?').get('image_provider') as any)?.value || 'openai';
+    const apiKey = (db.prepare('SELECT value FROM settings WHERE key = ?').get('image_api_key') as any)?.value;
+
+    let models: { id: string; recommended: boolean }[] = [];
+
+    if (apiKey) {
+      try {
+        if (provider === 'openai') {
+          const r = await fetch('https://api.openai.com/v1/models', { headers: { 'Authorization': `Bearer ${apiKey}` } });
+          if (r.ok) {
+            const data = await r.json();
+            models = (data.data || [])
+              .map((m: any) => m.id)
+              .filter((id: string) => id.includes('dall-e') || id.includes('gpt-image'))
+              .sort()
+              .map((id: string) => ({ id, recommended: RECOMMENDED_IMAGE_MODELS.has(id) }));
+          }
+        } else if (provider === 'gemini') {
+          const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+            headers: { 'x-goog-api-key': apiKey }
+          });
+          if (r.ok) {
+            const data = await r.json();
+            models = (data.models || [])
+              .map((m: any) => m.name?.replace('models/', '') || '')
+              .filter((id: string) => id.includes('imagen') || id.includes('image'))
+              .sort()
+              .map((id: string) => ({ id, recommended: RECOMMENDED_IMAGE_MODELS.has(id) }));
+          }
+        } else if (provider === 'stability') {
+          // Stability doesn't have a v2 model list — use known models
+          models = [
+            { id: 'sd3.5-large', recommended: true },
+            { id: 'sd3.5-medium', recommended: false },
+            { id: 'sd3.5-large-turbo', recommended: false },
+          ];
+        }
+      } catch (e) {
+        console.error(`Failed to fetch ${provider} image models:`, e);
+      }
+    }
+
+    // Fallback to static list if API returned nothing
+    if (models.length === 0) {
+      if (provider === 'openai') models = [{ id: 'gpt-image-1.5', recommended: true }, { id: 'gpt-image-1', recommended: false }, { id: 'dall-e-3', recommended: false }];
+      else if (provider === 'gemini') models = [{ id: 'imagen-4.0-generate-001', recommended: true }, { id: 'gemini-2.5-flash-image', recommended: true }, { id: 'gemini-3-pro-image-preview', recommended: false }];
+      else if (provider === 'stability') models = [{ id: 'sd3.5-large', recommended: true }, { id: 'sd3.5-medium', recommended: false }];
+    }
+
+    res.json({ provider, models });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch image models' });
+  }
+});
+
 app.get("/api/inventory", (req, res) => {
   try {
     const items = db.prepare("SELECT * FROM items ORDER BY category ASC, expiry_date ASC").all();
@@ -1650,17 +1710,33 @@ async function generateRecipeImage(title: string, description?: string): Promise
     const { GoogleGenAI } = await import('@google/genai');
     const genAI = new GoogleGenAI({ apiKey });
     const effectiveModel = model || 'imagen-4.0-generate-001';
-    const response = await genAI.models.generateContent({
-      model: effectiveModel,
-      contents: prompt,
-      config: { responseModalities: ['IMAGE', 'TEXT'] }
-    });
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    const imagePart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
-    if (imagePart?.inlineData) {
-      return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+
+    // Imagen models use generateImages, Gemini models use generateContent
+    if (effectiveModel.startsWith('imagen')) {
+      const response = await genAI.models.generateImages({
+        model: effectiveModel,
+        prompt,
+        config: { numberOfImages: 1 }
+      });
+      const images = (response as any).generatedImages || [];
+      if (images.length > 0 && images[0].image?.imageBytes) {
+        return `data:image/png;base64,${images[0].image.imageBytes}`;
+      }
+      return null;
+    } else {
+      // Gemini native image generation (e.g. gemini-2.5-flash-image)
+      const response = await genAI.models.generateContent({
+        model: effectiveModel,
+        contents: prompt,
+        config: { responseModalities: ['IMAGE', 'TEXT'] }
+      });
+      const parts = response.candidates?.[0]?.content?.parts || [];
+      const imagePart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+      if (imagePart?.inlineData) {
+        return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+      }
+      return null;
     }
-    return null;
   }
 
   if (provider === 'stability') {

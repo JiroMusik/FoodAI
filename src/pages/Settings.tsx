@@ -41,6 +41,7 @@ export default function Settings() {
     image_api_key: ''
   });
   const [loading, setLoading] = useState(true);
+  const [imageModels, setImageModels] = useState<{ id: string; recommended?: boolean }[]>([]);
   const [theme, setTheme] = useState(() => localStorage.getItem('foodai-theme') || 'light');
   const [customCss, setCustomCss] = useState(() => localStorage.getItem('foodai-custom-css') || '');
 
@@ -97,6 +98,7 @@ export default function Settings() {
   useEffect(() => {
     fetchSettings();
     fetchModels();
+    fetchImageModels();
   }, []);
 
   const fetchModels = async () => {
@@ -114,6 +116,20 @@ export default function Settings() {
       }
     } catch (error) {
       console.error('Failed to fetch models');
+    }
+  };
+
+  const fetchImageModels = async () => {
+    try {
+      const res = await fetch('/api/settings/image-models');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.models?.length > 0) {
+          setImageModels(data.models);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch image models');
     }
   };
 
@@ -143,6 +159,7 @@ export default function Settings() {
       toast.success(t('settings.settingsSaved'));
       // Re-fetch to ensure UI is in sync
       fetchSettings();
+      fetchImageModels();
     } catch (error) {
       toast.error(t('common.errorSaving'));
     }
@@ -357,6 +374,7 @@ export default function Settings() {
                 value={settings.image_provider}
                 onChange={e => {
                   const imgProvider = IMAGE_PROVIDERS.find(p => p.id === e.target.value);
+                  setImageModels(imgProvider?.models || []);
                   setSettings({
                     ...settings,
                     image_provider: e.target.value,
@@ -376,11 +394,11 @@ export default function Settings() {
                 {t('settings.imageModel')}
               </label>
               <select
-                value={settings.image_model || currentImageProvider?.models[0]?.id || ''}
+                value={settings.image_model || (imageModels.length > 0 ? imageModels[0]?.id : currentImageProvider?.models[0]?.id) || ''}
                 onChange={e => setSettings({...settings, image_model: e.target.value})}
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
               >
-                {currentImageProvider?.models.map(m => (
+                {(imageModels.length > 0 ? imageModels : currentImageProvider?.models || []).map(m => (
                   <option key={m.id} value={m.id}>{m.id}{m.recommended ? ' ⭐' : ''}</option>
                 ))}
               </select>
