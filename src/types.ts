@@ -35,7 +35,6 @@ export interface PlannedRecipe {
 }
 
 export interface Recipe {
-
   title: string;
   description: string;
   ingredients: {
@@ -45,4 +44,5 @@ export interface Recipe {
     in_inventory: boolean;
   }[];
   instructions: string[];
+  base_portions?: number;
 }

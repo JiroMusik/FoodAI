@@ -3,12 +3,14 @@ import express from 'express';
 import http from 'http';
 import https from 'https';
 import { createServer as createViteServer } from 'vite';
-import Database from 'better-sqlite3';
-import { GoogleGenAI, Type } from '@google/genai';
-// @ts-ignore
-import Bring from 'bring-shopping';
-import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
+import { db } from './server/db/database';
+import { runMigrations } from './server/db/migrations';
+import { mapCategory } from './server/utils/categories';
+import { normalizeUnit, convertToSmallestUnit, amountsMatch } from './server/utils/units';
+import { getAIResponse, checkRateLimit } from './server/services/ai.service';
+import { syncToBring } from './server/services/bring.service';
+import { SCAN_PROMPT, SCAN_SCHEMA, MHD_PROMPT, MHD_SCHEMA } from './server/services/prompts';
+import { Type } from '@google/genai';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -42,46 +44,8 @@ function isAllowedUrl(url: string): boolean {
   } catch { return false; }
 }
 
-// --- In-memory rate limiter for AI endpoints ---
-const aiRateLimit = new Map<string, number[]>();
-function checkRateLimit(ip: string, maxPerMinute: number = 10): boolean {
-  const now = Date.now();
-  const timestamps = (aiRateLimit.get(ip) || []).filter(t => now - t < 60000);
-  if (timestamps.length >= maxPerMinute) return false;
-  timestamps.push(now);
-  aiRateLimit.set(ip, timestamps);
-  return true;
-}
-
 // --- Settings key allowlist ---
 const ALLOWED_SETTINGS = ['ai_provider', 'ai_model', 'ai_api_key', 'ollama_url', 'bring_email', 'bring_password', 'advisor_model', 'language'];
-
-const mapCategory = (rawCategory: string, productName: string): string => {
-  const text = `${rawCategory} ${productName}`.toLowerCase();
-
-  // Gewürze & Saucen ZUERST — viele Gewürze werden sonst als Gemüse/Fleisch/Getränke gematcht
-  if (text.match(/gewürz|spice|sauce|condiment|salz\b|pfeffer|ketchup|mayo|remoulade|senf|essig|öl\b|olivenöl|dressing|marinade|brühe|bouillon|fond|soja|worcester|tabasco|sriracha|pesto|curry|kurkuma|kümmel|basilikum|rosmarin|oregano|thymian|petersilie|schnittlauch|dill|muskatnuss|paprika.*scharf|chili|peperoncin|ras el hanout|garam masala|zimt|nelke|anis|koriander|knoblauch.*granul|zwiebel.*pulver|sesam.*paste|tahina|saucenbinder|röstzwiebel|hackfleisch.*würz|steak.*pfeffer|pizza.*gewürz|pasta.*würz|bolognese.*gewürz|ankerkraut|fuchs|ostmann|ubena|cornichon|olive|kapern|gewürzzubereitung/)) return 'Gewürze & Saucen';
-  // Tiefkühl (hat Vorrang vor Fleisch/Fisch)
-  if (text.match(/frozen|tiefkühl|tiefgefroren|tk[ -]|ice cream|eis am stiel|pizza.*frozen|iglo|frosta|bofrost|gefrier|golden longs|rösti.*stäbchen/)) return 'Tiefkühl';
-  // Kühlregal
-  if (text.match(/dairy|milk|cheese|yogurt|milch|käse|joghurt|butter|cream|sahne|quark|schmand|skyr|frischkäse|aufschnitt|aufstrich|margarine|\bei\b|eier|creme fraiche|mascarpone|ricotta|mozzarella|grana padano|parmesan|kochsahne|vollmilch|creme fine|creme legere|schmetten|sauerrahm|topfen|hüttenkäse|philadelphia|bresso/)) return 'Kühlregal';
-  // Fleisch & Fisch (nach Gewürze — damit "Rinder Bouillon" nicht hier landet)
-  if (text.match(/meat|poultry|beef|pork|chicken|fleisch|hähnchen|wurst|würstchen|dörffler|schinken|salami|lachs|thunfisch|garnele|hack\b|rind.*steak|rind.*filet|rind.*roast|schwein|pute|truthahn|shrimp|pangasius|forelle|fish.*filet|fisch.*stäbchen/)) return 'Fleisch & Fisch';
-  // Backwaren
-  if (text.match(/bread|bakery|pastry|brot|brötchen|toast|kuchen|croissant|baguette|semmel|lauge|donut|muffin|teig|blätterteig|pizzateig|brioche|bun\b|hotdog.*roll|hotdog.*brød|sandwich|wrap|tortilla/)) return 'Backwaren';
-  // Obst & Gemüse
-  if (text.match(/fruit|vegetable|obst|gemüse|apple|banana|tomato|potato|apfel|banane|tomate|kartoffel|gurke|paprika|zwiebel\b|knoblauch\b|ingwer|salat|beere|pilz|champignon|karotte|möhre|brokkoli|zucchini|schalott|scharlott/)) return 'Obst & Gemüse';
-  // Getränke
-  if (text.match(/beverage|drink|water|juice|getränk|wasser|saft|cola|beer|wine|bier|wein|limonade|sprudel|kaffee|tee|milch.*drink/)) return 'Getränke';
-  // Snacks & Süßigkeiten
-  if (text.match(/snack|sweet|candy|chocolate|chips|süßigkeit|schokolade|keks|gummibärchen|riegel|nuss|nüsse/)) return 'Snacks & Süßigkeiten';
-  // Haushalt & Drogerie
-  if (text.match(/cleaning|hygiene|paper|household|haushalt|drogerie|seife|shampoo|waschmittel|spülmittel|papier|beutel|folie|schwamm/)) return 'Haushalt & Drogerie';
-  // Vorratsschrank (Fallback für alles was lange hält)
-  if (text.match(/pasta|rice|cereal|flour|sugar|noodle|reis|mehl|zucker|konserve|dose|canned|passierte tomaten|gehackte tomaten|tomatenmark|haferflocken|müsli|nudeln|spaghetti|spaghettoni|makkaroni|hörnchen|lasagne|penne|fusilli|linse|bohne|kidney|erbse|rotkohl|honig|blütenhonig|artischock|puder.*zucker|risi.*bisi/)) return 'Vorratsschrank';
-  
-  return 'Sonstiges';
-};
 
 // --- Ingredient Matching (alias map + fuzzy matching) ---
 const normalizeIngredient = (s: string) => s.toLowerCase().replace(/\(.*?\)/g, '').replace(/[,\.]/g, '').replace(/\s+/g, ' ').trim();
@@ -179,310 +143,7 @@ function matchRecipeIngredients(ingredients: { name: string; in_inventory?: bool
   for (const ing of ingredients) { ing.in_inventory = isIngredientInInventory(ing.name, inventoryItems); }
 }
 
-// Initialize SQLite Database
-const dbDir = process.env.DB_DIR || process.cwd();
-const dbPath = path.join(dbDir, 'inventory.db');
-const db = new Database(dbPath);
-
-const initDB = () => {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      generic_name TEXT,
-      quantity REAL NOT NULL,
-      unit TEXT NOT NULL,
-      expiry_date TEXT,
-      category TEXT,
-      barcode TEXT,
-      pieces_per_pack INTEGER DEFAULT 1,
-      package_size REAL,
-      is_open BOOLEAN DEFAULT 0,
-      opened_at DATETIME,
-      location TEXT DEFAULT 'Vorratsschrank',
-      price REAL,
-      min_stock REAL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS product_lookup (
-      barcode TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      generic_name TEXT,
-      category TEXT NOT NULL,
-      default_quantity REAL NOT NULL,
-      unit TEXT NOT NULL,
-      pieces_per_pack INTEGER DEFAULT 1,
-      location TEXT,
-      price REAL,
-      min_stock REAL
-    );
-
-    CREATE TABLE IF NOT EXISTS planned_recipes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      date TEXT NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT,
-      ingredients TEXT NOT NULL,
-      instructions TEXT NOT NULL,
-      portions INTEGER DEFAULT 2,
-      base_portions INTEGER DEFAULT 2,
-      cooked INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS weekly_plan (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      day_of_week TEXT NOT NULL,
-      recipe_title TEXT NOT NULL,
-      recipe_content TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS favorite_recipes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT,
-      ingredients TEXT NOT NULL,
-      instructions TEXT NOT NULL,
-      portions INTEGER DEFAULT 2,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-
-  // Column Migrations
-  // Note: String concatenation here is safe — all values are hardcoded literals, not user input.
-  const addColumn = (table: string, column: string, type: string) => {
-    try {
-      db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + type);
-    } catch (e) {}
-  };
-
-  addColumn('items', 'generic_name', 'TEXT');
-  addColumn('product_lookup', 'generic_name', 'TEXT');
-  addColumn('items', 'opened_at', 'DATETIME');
-  addColumn('items', 'is_open', 'BOOLEAN DEFAULT 0');
-  addColumn('items', 'package_size', 'REAL');
-  addColumn('items', 'location', 'TEXT DEFAULT "Vorratsschrank"');
-  addColumn('items', 'price', 'REAL');
-  addColumn('items', 'min_stock', 'REAL DEFAULT 0');
-  addColumn('product_lookup', 'location', 'TEXT');
-  addColumn('product_lookup', 'price', 'REAL');
-  addColumn('product_lookup', 'min_stock', 'REAL');
-
-  // Value Migrations
-  db.transaction(() => {
-    // Migrate "Packung" units to "Stück"
-    db.prepare("UPDATE items SET unit = 'Stück' WHERE unit = 'Packung'").run();
-    db.prepare("UPDATE product_lookup SET unit = 'Stück' WHERE unit = 'Packung'").run();
-
-    // Ensure package_size is set
-    db.prepare("UPDATE items SET package_size = quantity WHERE package_size IS NULL OR package_size = 0").run();
-
-    // Fix "null" strings in expiry_date
-    db.prepare("UPDATE items SET expiry_date = NULL WHERE expiry_date = 'null' OR expiry_date = 'undefined' OR expiry_date = ''").run();
-
-
-    // Category migration
-    const updates = [
-      { old: 'BREAD', new: 'Backwaren' },
-      { old: 'SALT', new: 'Gewürze & Saucen' },
-      { old: 'FRUIT', new: 'Obst & Gemüse' },
-      { old: 'VEGETABLE', new: 'Obst & Gemüse' },
-      { old: 'MEAT', new: 'Fleisch & Fisch' },
-      { old: 'DAIRY', new: 'Kühlregal' },
-      { old: 'BEVERAGE', new: 'Getränke' },
-      { old: 'SNACK', new: 'Snacks & Süßigkeiten' },
-      { old: 'PANTRY', new: 'Vorratsschrank' },
-      { old: 'OTHER', new: 'Sonstiges' }
-    ];
-    
-    const stmtItems = db.prepare('UPDATE items SET category = ? WHERE UPPER(category) = ?');
-    const stmtLookup = db.prepare('UPDATE product_lookup SET category = ? WHERE UPPER(category) = ?');
-    
-    for (const u of updates) {
-      stmtItems.run(u.new, u.old);
-      stmtLookup.run(u.new, u.old);
-    }
-
-    // Re-categorize all items for better consistency
-    const items = db.prepare('SELECT id, name, category FROM items').all() as any[];
-    const updateItemCat = db.prepare('UPDATE items SET category = ? WHERE id = ?');
-    for (const item of items) {
-      const newCat = mapCategory(item.category || '', item.name);
-      if (newCat !== item.category) {
-        updateItemCat.run(newCat, item.id);
-      }
-    }
-  })();
-};
-
-initDB();
-
-// Re-categorize runs after mapCategory is defined (see below)
-
-// Gemini AI Setup (lazy — key may come from DB settings later)
-let ai: GoogleGenAI | null = null;
-if (process.env.GEMINI_API_KEY) {
-  ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-}
-
-// --- AI Helper ---
-async function getAIResponse(prompt: string, imageBase64?: string, schema?: any, useAdvisorModel: boolean = false) {
-  const aiProvider = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_provider') as any)?.value || 'gemini';
-  let aiModel = (db.prepare('SELECT value FROM settings WHERE key = ?').get(useAdvisorModel ? 'advisor_model' : 'ai_model') as any)?.value;
-  const apiKey = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ai_api_key') as any)?.value;
-  const ollamaUrl = (db.prepare('SELECT value FROM settings WHERE key = ?').get('ollama_url') as any)?.value || 'http://localhost:11434';
-
-  console.log(`AI Request: Provider=${aiProvider}, Model=${aiModel || 'default'}`);
-
-  // Default models if not set
-  if (!aiModel) {
-    if (aiProvider === 'gemini') aiModel = 'gemini-3-flash-preview';
-    if (aiProvider === 'openai') aiModel = 'gpt-4o';
-    if (aiProvider === 'anthropic') aiModel = 'claude-3-5-sonnet-latest';
-  }
-
-  try {
-    if (aiProvider === 'gemini') {
-      const geminiKey = apiKey || process.env.GEMINI_API_KEY;
-      if (!geminiKey) throw new Error('Gemini API Key missing');
-      
-      const genAI = new GoogleGenAI({ apiKey: geminiKey });
-      const response = await genAI.models.generateContent({
-        model: aiModel,
-        contents: imageBase64 ? {
-          parts: [
-            { inlineData: { mimeType: 'image/jpeg', data: imageBase64.replace(/^data:image\/\w+;base64,/, '') } },
-            { text: prompt }
-          ]
-        } : { parts: [{ text: prompt }] },
-        config: schema ? {
-          responseMimeType: 'application/json',
-          responseSchema: schema
-        } : undefined
-      });
-      
-      const text = response.text;
-      if (!text) throw new Error('Empty response from Gemini');
-      
-      console.log('Gemini Raw Response:', text);
-      const cleanJson = text.replace(/```json\n?|```/g, '').trim();
-      try {
-        return JSON.parse(cleanJson);
-      } catch (e) {
-        console.error('JSON Parse Error (Gemini):', e);
-        // Try to extract JSON if there's extra text
-        const match = cleanJson.match(/\{[\s\S]*\}/);
-        if (match) return JSON.parse(match[0]);
-        throw e;
-      }
-    }
-
-    if (aiProvider === 'openai' || aiProvider === 'deepseek' || aiProvider === 'moonshot') {
-      let baseURL = undefined;
-      if (aiProvider === 'deepseek') baseURL = 'https://api.deepseek.com';
-      if (aiProvider === 'moonshot') baseURL = 'https://api.moonshot.cn/v1';
-
-      const client = new OpenAI({ apiKey, baseURL });
-      const messages: any[] = [{ role: 'user', content: [{ type: 'text', text: prompt }] }];
-      
-      if (imageBase64) {
-        messages[0].content.push({
-          type: 'image_url',
-          image_url: { url: imageBase64 }
-        });
-      }
-
-      const response = await client.chat.completions.create({
-        model: aiModel,
-        messages,
-        response_format: schema ? { type: 'json_object' } : undefined
-      });
-      const content = response.choices[0].message.content;
-      if (!content) throw new Error('Empty response from AI');
-      const cleanJson = content.replace(/```json\n?|```/g, '').trim();
-      return JSON.parse(cleanJson);
-    }
-
-    if (aiProvider === 'anthropic') {
-      const anthropic = new Anthropic({ apiKey });
-      const content: any[] = [{ type: 'text', text: prompt }];
-      
-      if (imageBase64) {
-        content.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: 'image/jpeg',
-            data: imageBase64.replace(/^data:image\/\w+;base64,/, '')
-          }
-        });
-      }
-
-      const response = await anthropic.messages.create({
-        model: aiModel,
-        max_tokens: 1024,
-        messages: [{ role: 'user', content }]
-      });
-      const text = (response.content[0] as any).text;
-      const cleanJson = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
-      return JSON.parse(cleanJson);
-    }
-
-    if (aiProvider === 'ollama') {
-      if (!isAllowedUrl(ollamaUrl)) throw new Error('Invalid Ollama URL');
-      const response = await fetch(`${ollamaUrl}/api/generate`, {
-        method: 'POST',
-        body: JSON.stringify({
-          model: aiModel,
-          prompt: prompt,
-          images: imageBase64 ? [imageBase64.replace(/^data:image\/\w+;base64,/, '')] : [],
-          format: 'json',
-          stream: false
-        })
-      });
-      const data = await response.json();
-      return JSON.parse(data.response);
-    }
-  } catch (err: any) {
-    console.error('AI Error:', err.message);
-    throw err;
-  }
-
-  throw new Error('Unsupported AI Provider');
-}
-
-// --- Unit and Matching Utilities ---
-const normalizeUnit = (unit: string): string => {
-  const u = unit.toLowerCase().trim();
-  if (u === 'g' || u === 'gramm') return 'g';
-  if (u === 'kg' || u === 'kilogramm') return 'kg';
-  if (u === 'ml' || u === 'milliliter') return 'ml';
-  if (u === 'l' || u === 'liter') return 'l';
-  if (u === 'stk' || u === 'stück' || u === 'piece' || u === 'pcs') return 'Stück';
-  if (u === 'pkg' || u === 'packung' || u === 'pack') return 'Packung';
-  return unit;
-};
-
-const convertToSmallestUnit = (amount: number, unit: string): { amount: number, unit: string } => {
-  const norm = normalizeUnit(unit);
-  if (norm === 'kg') return { amount: amount * 1000, unit: 'g' };
-  if (norm === 'l') return { amount: amount * 1000, unit: 'ml' };
-  return { amount, unit: norm };
-};
-
-const amountsMatch = (reqAmt: number, reqUnit: string, invAmt: number, invUnit: string): boolean => {
-  const req = convertToSmallestUnit(reqAmt, reqUnit);
-  const inv = convertToSmallestUnit(invAmt, invUnit);
-  if (req.unit !== inv.unit) return false;
-  return inv.amount >= req.amount;
-};
+runMigrations(db);
 
 // --- API Routes ---
 
@@ -561,37 +222,52 @@ app.get('/api/settings/models', async (req, res) => {
   }
 });
 
-app.get('/api/inventory', (req, res) => {
+app.get("/api/inventory", (req, res) => {
   try {
-    const items = db.prepare('SELECT * FROM items ORDER BY category ASC, expiry_date ASC').all();
+    const items = db.prepare("SELECT * FROM items ORDER BY category ASC, expiry_date ASC").all();
     res.json(items);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch inventory' });
+    console.error("Inventory Fetch Error:", error);
+    res.status(500).json({ error: "Failed to fetch inventory" });
   }
 });
 
-app.get('/api/dashboard', (req, res) => {
+app.get("/api/dashboard", (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split("T")[0];
     const threeDaysLater = new Date();
     threeDaysLater.setDate(threeDaysLater.getDate() + 3);
-    const threeDaysLaterStr = threeDaysLater.toISOString().split('T')[0];
+    const threeDaysLaterStr = threeDaysLater.toISOString().split("T")[0];
 
-    const expiringSoon = db.prepare('SELECT * FROM items WHERE expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC').all(threeDaysLaterStr);
-    const openedItems = db.prepare('SELECT * FROM items WHERE is_open = 1 AND quantity > 0 ORDER BY opened_at DESC').all();
-    const todaysRecipes = db.prepare('SELECT * FROM planned_recipes WHERE date = ?').all(today).map((r: any) => ({
+    const expiringSoon = db.prepare("SELECT * FROM items WHERE expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC").all(threeDaysLaterStr);
+    const openedItems = db.prepare("SELECT * FROM items WHERE is_open = 1 AND quantity > 0 ORDER BY opened_at DESC").all();
+    const todaysRecipes = db.prepare("SELECT * FROM planned_recipes WHERE date = ?").all(today).map((r: any) => ({
       ...r,
       ingredients: JSON.parse(r.ingredients),
       instructions: JSON.parse(r.instructions),
       cooked: r.cooked === 1
     }));
 
-    const totalValue = db.prepare('SELECT SUM(price * quantity) as value FROM items WHERE price IS NOT NULL').get() as any;
-    const lowStockCount = (db.prepare('SELECT COUNT(*) as cnt FROM items WHERE min_stock > 0 AND quantity <= min_stock').get() as any)?.cnt || 0;
+    const totalValueResult = db.prepare("SELECT SUM(price * quantity) as value FROM items WHERE price IS NOT NULL").get() as any;
+    
+    const lowStockCount = db.prepare(`
+      SELECT COUNT(*) as count FROM (
+        SELECT name, unit, SUM(quantity) as total, MAX(min_stock) as min 
+        FROM items 
+        GROUP BY name, unit
+      ) WHERE min > 0 AND total < min
+    `).get() as any;
 
-    res.json({ expiringSoon, openedItems, todaysRecipes, totalValue: totalValue?.value || 0, lowStockCount });
+    res.json({ 
+      expiringSoon, 
+      openedItems, 
+      todaysRecipes, 
+      totalValue: totalValueResult?.value || 0,
+      lowStockCount: lowStockCount?.count || 0
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch dashboard data' });
+    console.error("Dashboard Fetch Error:", error);
+    res.status(500).json({ error: "Failed to fetch dashboard data" });
   }
 });
 
@@ -2035,119 +1711,6 @@ app.post('/api/settings', (req, res) => {
   }
 });
 
-// --- Bring! Integration Logic ---
-const getBringClient = () => {
-  const emailRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('bring_email') as any;
-  const passRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('bring_password') as any;
-  if (!emailRow || !passRow) return null;
-  return new Bring({ mail: emailRow.value, password: passRow.value });
-};
-
-// Sync shopping list to Bring! automatically
-const syncToBring = async () => {
-  const bring = getBringClient();
-  if (!bring) return;
-
-  try {
-    await bring.login();
-    const lists = await bring.loadLists();
-    if (!lists || lists.lists.length === 0) return;
-
-    // Pick the first (default) list
-    const listId = lists.lists[0].listUuid;
-    const bringItems = await bring.getItems(listId);
-
-    // Calculate our current internal shopping list
-    const today = new Date().toISOString().split('T')[0];
-    const upcomingRecipes = db.prepare('SELECT * FROM planned_recipes WHERE date >= ? AND cooked = 0').all(today);
-
-    const required: Record<string, { amount: number, unit: string, name: string }> = {};
-    upcomingRecipes.forEach((recipe: any) => {
-      const ingredients = JSON.parse(recipe.ingredients);
-      const ratio = recipe.portions / recipe.base_portions;
-      ingredients.forEach((ing: any) => {
-        const smallest = convertToSmallestUnit(ing.amount * ratio, ing.unit);
-        const key = `${ing.name.toLowerCase()}_${smallest.unit}`;
-        if (!required[key]) {
-          required[key] = { amount: 0, unit: smallest.unit, name: ing.name };
-        }
-        required[key].amount += smallest.amount;
-      });
-    });
-
-    const inventory = db.prepare('SELECT name, quantity, unit, min_stock FROM items WHERE quantity > 0').all() as any[];
-    const allKnownItems = db.prepare('SELECT name, quantity, unit, min_stock FROM items').all() as any[];
-
-    // Include min_stock requirements
-    const stockLevels: Record<string, { total: number, min: number, unit: string }> = {};
-    allKnownItems.forEach(item => {
-      const key = `${item.name.toLowerCase()}_${normalizeUnit(item.unit)}`;
-      if (!stockLevels[key]) {
-        stockLevels[key] = { total: 0, min: item.min_stock || 0, unit: normalizeUnit(item.unit) };
-      }
-      const smallest = convertToSmallestUnit(item.quantity, item.unit);
-      stockLevels[key].total += smallest.amount;
-    });
-
-    Object.entries(stockLevels).forEach(([key, level]) => {
-      if (level.min > 0 && level.total < level.min) {
-        const name = key.split('_')[0];
-        const missing = level.min - level.total;
-        if (!required[key]) {
-          required[key] = { amount: 0, unit: level.unit, name: name.charAt(0).toUpperCase() + name.slice(1) };
-        }
-        required[key].amount += missing;
-      }
-    });
-
-    const missingNames = new Set<string>();
-
-    Object.values(required).forEach((reqIng: any) => {
-      const matchingItems = inventory.filter(inv => {
-        const isNameMatch = inv.name.toLowerCase().includes(reqIng.name.toLowerCase()) || 
-                          reqIng.name.toLowerCase().includes(inv.name.toLowerCase());
-        if (!isNameMatch) return false;
-        const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
-        return invSmallest.unit === reqIng.unit;
-      });
-
-      const totalInInventory = matchingItems.reduce((sum, inv) => {
-        const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
-        return sum + invSmallest.amount;
-      }, 0);
-
-      if (totalInInventory < reqIng.amount) {
-        // Just use the name for Bring to avoid weird formatting conflicts, but could include amount if desired
-        missingNames.add(reqIng.name.toLowerCase());
-      }
-    });
-
-    // ONE-WAY SYNC LOGIC
-    // 1. Add anything from our missing list that isn't on Bring
-    const bringCurrentNames = new Set(bringItems.purchase.map((i: any) => i.name.toLowerCase()));
-
-    for (const missingName of missingNames) {
-      if (!bringCurrentNames.has(missingName)) {
-        await bring.saveItem(listId, missingName, '');
-      }
-    }
-
-    // 2. Remove anything from Bring that was on our missing list previously, but is no longer missing 
-    // (We only want to remove items that FoodAI "knows" about to avoid deleting manual Bring additions)
-    const allInternalIngredients = new Set(allKnownItems.map(i => i.name.toLowerCase()));
-
-    for (const bringItem of bringItems.purchase) {
-      const bringName = bringItem.name.toLowerCase();
-      // If it's a known ingredient in FoodAI, BUT it's no longer on the missing list -> we bought it! Remove from Bring.
-      if (allInternalIngredients.has(bringName) && !missingNames.has(bringName)) {
-        await bring.removeItem(listId, bringItem.name);
-      }
-    }
-
-  } catch (error) {
-    console.error('Bring sync error:', error);
-  }
-};
 
 app.post('/api/bring/add', async (req, res) => {
   try {

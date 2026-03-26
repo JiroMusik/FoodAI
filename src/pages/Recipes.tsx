@@ -1,154 +1,103 @@
 import { useState, useEffect } from 'react';
-import { ChefHat, Loader2, ShoppingCart, CheckCircle2, Calendar, Utensils, ChevronRight, ChevronDown, Heart, Star, X, Link2 } from 'lucide-react';
+import { ChefHat, Loader2, ShoppingCart, CheckCircle2, Calendar, Utensils, ChevronRight, ChevronDown, Heart, Star, X, Link2, Save, Trash2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { Recipe } from '../types.ts';
 import RecipeCard from '../components/RecipeCard';
+import Navigation from '../components/Navigation';
+import { useRecipes } from '../hooks/useRecipes';
+import { useCalendar } from '../hooks/useCalendar';
 import { useTranslation } from 'react-i18next';
+import { motion, AnimatePresence } from 'motion/react';
 
 export default function Recipes() {
-  const { t } = useTranslation();
-  const [recipe, setRecipe] = useState<Recipe | null>(() => {
-    const saved = localStorage.getItem('currentRecipe');
-    return saved ? JSON.parse(saved) : null;
-  });
-  const [weeklyPlan, setWeeklyPlan] = useState<any[]>(() => {
-    const saved = localStorage.getItem('currentWeeklyPlan');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [loading, setLoading] = useState(false);
+  const { t, i18n } = useTranslation();
+  const {
+    recipe,
+    setRecipe,
+    weeklyPlan,
+    setWeeklyPlan,
+    favorites,
+    loading,
+    setLoading,
+    fetchFavorites,
+    generateRecipe: apiGenerateRecipe,
+    generateWeeklyPlan: apiGenerateWeeklyPlan,
+    saveFavorite,
+    deleteFavorite
+  } = useRecipes();
+
+  const { addRecipe, addWeek } = useCalendar();
+
   const [preferences, setPreferences] = useState(() => localStorage.getItem('recipePreferences') || '');
   const [portions, setPortions] = useState(() => parseInt(localStorage.getItem('recipePortions') || '2'));
   const [targetDate, setTargetDate] = useState(() => localStorage.getItem('recipeTargetDate') || new Date().toISOString().split('T')[0]);
   const [mode, setMode] = useState<'single' | 'weekly'>(() => (localStorage.getItem('recipeMode') as 'single' | 'weekly') || 'single');
   const [expandedDay, setExpandedDay] = useState<number | null>(null);
-  const [cookedResult, setCookedResult] = useState<any>(null);
   const [allowExtra, setAllowExtra] = useState(false);
   const [maxExtraItems, setMaxExtraItems] = useState(3);
-  const [favorites, setFavorites] = useState<any[]>([]);
-  const [showFavorites, setShowFavorites] = useState(false);
   const [importUrl, setImportUrl] = useState('');
   const [showImport, setShowImport] = useState(false);
-
-  useEffect(() => {
-    if (recipe) localStorage.setItem('currentRecipe', JSON.stringify(recipe));
-    else localStorage.removeItem('currentRecipe');
-  }, [recipe]);
-
-  useEffect(() => {
-    if (weeklyPlan.length > 0) localStorage.setItem('currentWeeklyPlan', JSON.stringify(weeklyPlan));
-    else localStorage.removeItem('currentWeeklyPlan');
-  }, [weeklyPlan]);
+  const [showFavorites, setShowFavorites] = useState(false);
+  const [showWeeklyModal, setShowWeeklyModal] = useState(false);
+  const [planDaysCount, setPlanDaysCount] = useState(7);
+  const [planSettings, setPlanSettings] = useState<{ date: string, meals: number, portions: number }[]>([]);
 
   useEffect(() => {
     localStorage.setItem('recipePreferences', preferences);
-  }, [preferences]);
-
-  useEffect(() => {
     localStorage.setItem('recipePortions', portions.toString());
-  }, [portions]);
-
-  useEffect(() => {
     localStorage.setItem('recipeTargetDate', targetDate);
-  }, [targetDate]);
+    localStorage.setItem('recipeMode', mode);
+  }, [preferences, portions, targetDate, mode]);
 
   useEffect(() => {
-    localStorage.setItem('recipeMode', mode);
-  }, [mode]);
+    const newSettings = [];
+    for (let i = 0; i < planDaysCount; i++) {
+      const d = new Date(targetDate);
+      d.setDate(d.getDate() + i);
+      const dateStr = d.toISOString().split('T')[0];
+      const existing = planSettings.find(s => s.date === dateStr);
+      newSettings.push(existing || { date: dateStr, meals: 1, portions: portions });
+    }
+    setPlanSettings(newSettings);
+  }, [targetDate, planDaysCount, portions]);
 
-  useEffect(() => { fetchFavorites(); }, []);
+  useEffect(() => { fetchFavorites(); }, [fetchFavorites]);
 
-  const fetchFavorites = async () => {
+  const handleGenerateRecipe = async () => {
+    setMode('single');
     try {
-      const res = await fetch('/api/recipes/favorites');
-      if (res.ok) setFavorites(await res.json());
+      await apiGenerateRecipe({ preferences, portions, allowExtra, maxExtraItems });
     } catch (e) {}
   };
 
-  const fetchWeeklyPlan = async () => {
+  const handleGenerateWeekly = async () => {
+    setMode('weekly');
+    setShowWeeklyModal(false);
     try {
-      const res = await fetch('/api/recipes/weekly');
-      if (res.ok) {
-        const data = await res.json();
-        // Only set if we don't have one already, or if we want to refresh
-        if (weeklyPlan.length === 0) {
-           setWeeklyPlan(data.plan || []);
-        }
-      }
-    } catch (error) {
-      console.error('Failed to fetch weekly plan');
-    }
+      await apiGenerateWeeklyPlan({ preferences, planSettings, allowExtra, maxExtraItems });
+    } catch (e) {}
   };
 
-  const generateRecipe = async () => {
+  const handleImport = async () => {
+    if (!importUrl) return;
     setLoading(true);
-    setRecipe(null);
-    setCookedResult(null);
-    setMode('single');
     try {
-      const res = await fetch('/api/recipes/generate', {
+      const res = await fetch('/api/recipes/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferences, portions, allowExtra, maxExtraItems })
+        body: JSON.stringify({ url: importUrl })
       });
-      if (!res.ok) throw new Error('Failed');
+      if (!res.ok) throw new Error('Import failed');
       const data = await res.json();
       setRecipe(data);
-    } catch (error) {
-      toast.error(t('recipes.errorGeneratingRecipe'));
+      setMode('single');
+      setShowImport(false);
+      setImportUrl('');
+      toast.success(t('recipes.importSuccess'));
+    } catch (e) {
+      toast.error(t('recipes.importError'));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const generateWeeklyPlan = async () => {
-    setLoading(true);
-    setWeeklyPlan([]);
-    setCookedResult(null);
-    setMode('weekly');
-    try {
-      const res = await fetch('/api/recipes/weekly', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferences, portions })
-      });
-      if (!res.ok) throw new Error('Failed');
-      const data = await res.json();
-      setWeeklyPlan(data.plan);
-      toast.success(t('recipes.weeklyPlanGenerated'));
-    } catch (error) {
-      toast.error(t('recipes.errorGeneratingWeeklyPlan'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCook = async (targetRecipe: Recipe) => {
-    try {
-      const res = await fetch('/api/recipes/cook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ usedIngredients: targetRecipe.ingredients })
-      });
-      if (!res.ok) throw new Error('Failed');
-      const data = await res.json();
-      setCookedResult(data);
-      toast.success(t('recipes.enjoyMealInventoryUpdated'));
-    } catch (error) {
-      toast.error(t('recipes.errorUpdatingInventory'));
-    }
-  };
-
-  const addToBring = async (items: string[]) => {
-    try {
-      const res = await fetch('/api/bring/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items })
-      });
-      if (!res.ok) throw new Error('Failed');
-      toast.success(t('recipes.addedToBring'));
-    } catch (error) {
-      toast.error(t('recipes.errorAddingToBring'));
     }
   };
 
@@ -163,433 +112,281 @@ export default function Recipes() {
           base_portions: targetRecipe.base_portions || portions
         })
       });
-      
-      if (!res.ok) throw new Error('Failed to calculate missing items');
-      
+      if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       const missingItems = data.missingIngredients.map((i: any) => `${i.name} (${i.amountNeeded} ${i.unit})`);
-      
       if (missingItems.length === 0) {
         toast.success(t('recipes.allIngredientsAvailable'));
         return;
       }
-      
-      await addToBring(missingItems);
+      // Send to Bring API
+      await fetch('/api/bring/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: missingItems })
+      });
+      toast.success(t('shopping.addedToBringList'));
     } catch (error) {
       toast.error(t('recipes.errorAddingToBring'));
     }
   };
 
-  const saveAsFavorite = async (targetRecipe: Recipe) => {
-    try {
-      const res = await fetch('/api/recipes/favorites', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...targetRecipe, portions })
-      });
-      if (res.ok) {
-        toast.success(t('recipes.savedAsFavorite'));
-        fetchFavorites();
-      }
-    } catch (e) { toast.error(t('common.errorSaving')); }
-  };
-
-  const deleteFavorite = async (id: number) => {
-    try {
-      await fetch(`/api/recipes/favorites/${id}`, { method: 'DELETE' });
-      setFavorites(favorites.filter(f => f.id !== id));
-      toast.success(t('recipes.favoriteRemoved'));
-    } catch (e) { toast.error(t('common.error')); }
-  };
-
-  const importFromUrl = async () => {
-    if (!importUrl.trim()) return;
-    setLoading(true);
-    setRecipe(null);
-    setMode('single');
-    setShowImport(false);
-    try {
-      const res = await fetch('/api/recipes/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: importUrl.trim() })
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Import failed');
-      }
-      const data = await res.json();
-      setRecipe(data);
-      setImportUrl('');
-      toast.success(t('recipes.importSuccess'));
-    } catch (error: any) {
-      toast.error(error.message || t('recipes.importError'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const addToCalendarSingle = async () => {
-    if (!recipe) return;
-    try {
-      const res = await fetch('/api/calendar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: targetDate,
-          title: recipe.title,
-          description: recipe.description,
-          ingredients: recipe.ingredients,
-          instructions: recipe.instructions,
-          portions: portions,
-          base_portions: portions
-        })
-      });
-      if (res.ok) {
-        toast.success(t('recipes.addedToCalendar'));
-        setRecipe(null);
-      }
-    } catch (e) {
-      toast.error(t('common.errorSaving'));
-    }
-  };
-
-  const addToCalendarWeekly = async () => {
-    if (!weeklyPlan.length) return;
-    try {
-      const res = await fetch('/api/calendar/week', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          startDate: targetDate,
-          recipes: weeklyPlan,
-          portions: portions
-        })
-      });
-      if (res.ok) {
-        toast.success(t('recipes.weekSavedToCalendar'));
-        setWeeklyPlan([]);
-      }
-    } catch (e) {
-      toast.error(t('common.errorSaving'));
-    }
-  };
-
   return (
-    <div className="p-4 max-w-3xl mx-auto pb-24">
-      <header className="mb-8 pt-4">
-        <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('recipes.title')}</h1>
+    <div className="p-4 sm:p-8 max-w-4xl mx-auto pb-32">
+      <header className="flex justify-between items-center mb-8 pt-4">
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-black tracking-tight text-gray-900">{t('recipes.title')}</h1>
+          <div className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full border border-emerald-100 font-bold text-xs">
+            AI
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowFavorites(!showFavorites)}
+            className={`p-3 rounded-2xl transition-all ${showFavorites ? 'bg-orange-500 text-white shadow-lg' : 'bg-white border border-gray-100 text-orange-500 shadow-sm'}`}
+          >
+            <Star size={20} />
+          </button>
+          <button
+            onClick={() => setShowImport(true)}
+            className="p-3 bg-white border border-gray-100 text-emerald-600 rounded-2xl shadow-sm hover:bg-emerald-50 transition-all"
+          >
+            <Link2 size={20} />
+          </button>
+        </div>
       </header>
 
-      {!cookedResult && (
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 mb-8">
-          <div className="space-y-4">
-            <div className="flex space-x-4">
-              <div className="flex-1">
-                <label className="block text-sm font-medium text-gray-700 mb-2">{t('recipes.portionsLabel')}</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={portions}
-                  onChange={e => setPortions(parseInt(e.target.value) || 1)}
-                  className="w-full border border-gray-200 rounded-2xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">{t('recipes.preferencesLabel')}</label>
-              <textarea
-                value={preferences}
-                onChange={e => setPreferences(e.target.value)}
-                className="w-full border border-gray-200 rounded-2xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none resize-none h-24"
-                placeholder={t('recipes.preferencesPlaceholder')}
-              />
-            </div>
-            <div className="flex items-center justify-between bg-gray-50 rounded-2xl p-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700">{t('recipes.allowExtraIngredients')}</label>
-                <p className="text-xs text-gray-400">{t('recipes.allowExtraDescription')}</p>
-              </div>
-              <button
-                onClick={() => setAllowExtra(!allowExtra)}
-                className={`w-12 h-7 rounded-full transition-colors ${allowExtra ? 'bg-emerald-500' : 'bg-gray-300'}`}
-              >
-                <div className={`w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform mx-1 ${allowExtra ? 'translate-x-5' : 'translate-x-0'}`} />
-              </button>
-            </div>
-            {allowExtra && (
-              <div className="bg-gray-50 rounded-2xl p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium text-gray-700">{t('recipes.maxExtraIngredients')}</label>
-                  <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-sm font-bold">{maxExtraItems}</span>
-                </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="8"
-                  value={maxExtraItems}
-                  onChange={e => setMaxExtraItems(parseInt(e.target.value))}
-                  className="w-full accent-emerald-500"
-                />
-              </div>
-            )}
-            <div className="flex space-x-3">
-              <button
-                onClick={generateRecipe}
-                disabled={loading}
-                className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-semibold flex items-center justify-center space-x-2 hover:bg-emerald-700 transition-colors disabled:opacity-50 shadow-lg shadow-emerald-100"
-              >
-                {loading && mode === 'single' ? <Loader2 className="animate-spin" size={20} /> : <Utensils size={20} />}
-                <span>{t('recipes.singleRecipe')}</span>
-              </button>
-              <button
-                onClick={() => setShowWeeklyModal(true)}
-                disabled={loading}
-                className="flex-1 bg-gray-900 text-white py-4 rounded-2xl font-semibold flex items-center justify-center space-x-2 hover:bg-gray-800 transition-colors disabled:opacity-50 shadow-lg shadow-gray-200"
-              >
-                <Calendar size={20} />
-                <span>{t('recipes.weeklyPlan')}</span>
-              </button>
-            </div>
-
-            {/* Import from URL */}
+      {showImport && (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 mb-8 animate-in slide-in-from-top-4 duration-300">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-bold text-gray-900">{t('recipes.importTitle')}</h2>
+            <button onClick={() => setShowImport(false)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="https://www.gutekueche.de/..."
+              value={importUrl}
+              onChange={e => setImportUrl(e.target.value)}
+              className="flex-1 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
+            />
             <button
-              onClick={() => setShowImport(!showImport)}
-              className="w-full py-3 text-sm font-medium text-gray-500 hover:text-emerald-600 flex items-center justify-center gap-2 transition-colors"
+              onClick={handleImport}
+              disabled={loading || !importUrl}
+              className="bg-emerald-600 text-white px-6 rounded-xl font-bold disabled:opacity-50"
             >
-              <Link2 size={16} />
-              {t('recipes.importFromUrl')}
+              {loading ? <Loader2 className="animate-spin" size={20} /> : t('common.import')}
             </button>
-
-            {showImport && (
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  value={importUrl}
-                  onChange={e => setImportUrl(e.target.value)}
-                  placeholder={t('recipes.importUrlPlaceholder')}
-                  className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                  onKeyDown={e => e.key === 'Enter' && importFromUrl()}
-                />
-                <button
-                  onClick={importFromUrl}
-                  disabled={loading || !importUrl.trim()}
-                  className="px-6 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-                >
-                  {t('recipes.import')}
-                </button>
-              </div>
-            )}
           </div>
         </div>
       )}
 
-      {loading && (
-        <div className="flex flex-col items-center justify-center py-12 space-y-4">
-          <Loader2 className="animate-spin text-emerald-600" size={48} />
-          <p className="text-gray-500 font-medium">{t('recipes.aiCreatingPlan')}</p>
+      {showFavorites && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8 animate-in slide-in-from-top-4 duration-300">
+          {favorites.length === 0 ? (
+            <div className="col-span-full bg-orange-50 text-orange-600 p-8 rounded-3xl text-center border border-orange-100">
+              {t('recipes.noFavorites')}
+            </div>
+          ) : (
+            favorites.map(fav => (
+              <div key={fav.id} className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 relative group">
+                <button 
+                  onClick={() => deleteFavorite(fav.id)}
+                  className="absolute top-4 right-4 text-gray-300 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 size={16} />
+                </button>
+                <h3 className="font-bold text-gray-900 mb-2 pr-8">{fav.title}</h3>
+                <p className="text-xs text-gray-500 line-clamp-2 mb-4">{fav.description}</p>
+                <button
+                  onClick={() => { setRecipe(fav); setMode('single'); setShowFavorites(false); }}
+                  className="w-full bg-emerald-50 text-emerald-600 py-2 rounded-xl text-xs font-bold hover:bg-emerald-100 transition-colors"
+                >
+                  {t('recipes.viewRecipe')}
+                </button>
+              </div>
+            ))
+          )}
         </div>
       )}
 
-      {!loading && !cookedResult && mode === 'single' && recipe && (
-        <div className="space-y-4">
+      <div className="bg-white rounded-[32px] shadow-sm border border-gray-100 p-8 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div className="group">
+            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">{t('recipes.portionsLabel')}</label>
+            <input
+              type="number"
+              min="1"
+              value={portions}
+              onChange={e => setPortions(parseInt(e.target.value) || 1)}
+              className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold bg-transparent transition-colors"
+            />
+          </div>
+          <div className="group">
+            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">{t('recipes.preferencesLabel')}</label>
+            <input
+              type="text"
+              value={preferences}
+              onChange={e => setPreferences(e.target.value)}
+              placeholder={t('recipes.preferencesPlaceholder')}
+              className="w-full border-b-2 border-gray-100 py-3 focus:border-emerald-500 focus:outline-none text-xl font-semibold bg-transparent transition-colors"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-4">
+          <button
+            onClick={handleGenerateRecipe}
+            disabled={loading}
+            className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50 active:scale-95"
+          >
+            {loading && mode === 'single' ? <Loader2 className="animate-spin" size={24} /> : <Utensils size={24} />}
+            {t('recipes.singleRecipe')}
+          </button>
+          <button
+            onClick={() => setShowWeeklyModal(true)}
+            disabled={loading}
+            className="flex-1 bg-gray-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-gray-800 transition-all shadow-lg shadow-gray-200 disabled:opacity-50 active:scale-95"
+          >
+            <Calendar size={24} />
+            {t('recipes.weeklyPlan')}
+          </button>
+        </div>
+      </div>
+
+      {loading && (
+        <div className="flex flex-col items-center justify-center py-20 animate-pulse">
+          <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mb-6">
+            <ChefHat size={40} className="text-emerald-500" />
+          </div>
+          <p className="text-gray-400 font-bold uppercase tracking-widest text-sm">{t('recipes.aiCreatingPlan')}</p>
+        </div>
+      )}
+
+      {!loading && mode === 'single' && recipe && (
+        <div className="space-y-6 animate-in slide-in-from-bottom-8 duration-500">
           <RecipeCard
             recipe={recipe}
-            onCook={() => handleCook(recipe)}
+            onCook={() => toast.error('Please add to calendar first')}
             onBring={() => addToBringFromRecipe(recipe)}
             onBack={() => setRecipe(null)}
           />
-          <div className="flex space-x-3">
+          <div className="grid grid-cols-2 gap-4">
             <button
-              onClick={() => saveAsFavorite(recipe)}
-              className="flex-1 bg-orange-50 text-orange-600 py-4 rounded-2xl font-bold flex items-center justify-center space-x-2 hover:bg-orange-100 transition-colors border border-orange-200"
+              onClick={() => saveFavorite(recipe)}
+              className="bg-orange-50 text-orange-600 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-orange-100 transition-colors border border-orange-100"
             >
               <Heart size={20} />
-              <span>{t('recipes.favorite')}</span>
+              {t('recipes.favorite')}
             </button>
             <button
-              onClick={addToCalendarSingle}
-              className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-bold flex items-center justify-center space-x-2 hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-100"
+              onClick={() => { addRecipe({ ...recipe, date: targetDate, portions }); setRecipe(null); }}
+              className="bg-emerald-50 text-emerald-600 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-emerald-100 transition-colors border border-emerald-100"
             >
               <Calendar size={20} />
-              <span>{t('recipes.addToCalendar')}</span>
+              {t('recipes.toCalendar')}
             </button>
           </div>
         </div>
       )}
 
-      {/* Favorites Section */}
-      {!loading && !cookedResult && !recipe && weeklyPlan.length === 0 && favorites.length > 0 && (
-        <div className="mt-8">
-          <button onClick={() => setShowFavorites(!showFavorites)} className="flex items-center space-x-2 mb-4 group">
-            <Star size={18} className="text-orange-500" />
-            <h2 className="text-lg font-bold text-gray-900">{t('recipes.favorites')}</h2>
-            <span className="bg-orange-100 text-orange-600 text-xs px-2 py-0.5 rounded-full font-bold">{favorites.length}</span>
-            {showFavorites ? <ChevronDown size={18} className="text-gray-400" /> : <ChevronRight size={18} className="text-gray-400" />}
-          </button>
-          {showFavorites && (
-            <div className="space-y-3">
-              {favorites.map((fav: any) => (
-                <div key={fav.id} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-bold text-gray-900">{fav.title}</h3>
-                    <button onClick={() => deleteFavorite(fav.id)} className="text-gray-300 hover:text-red-500 p-1"><X size={16} /></button>
-                  </div>
-                  <p className="text-sm text-gray-500 mb-3">{fav.description}</p>
-                  <div className="flex space-x-2">
-                    <button onClick={() => { setRecipe(fav); setMode('single'); }} className="flex-1 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-sm font-bold hover:bg-emerald-100">{t('recipes.showFavorite')}</button>
-                    <button onClick={() => handleCook(fav)} className="flex-1 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-200">{t('recipes.cookFavorite')}</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {!loading && !cookedResult && mode === 'weekly' && weeklyPlan.length > 0 && (
-        <div className="space-y-4">
+      {!loading && mode === 'weekly' && weeklyPlan.length > 0 && (
+        <div className="space-y-6 animate-in slide-in-from-bottom-8 duration-500">
           <div className="flex items-center justify-between px-2">
-            <h2 className="text-xl font-bold">{t('recipes.yourWeeklyPlan')}</h2>
+            <h2 className="text-xl font-black text-gray-900 uppercase tracking-tight">{t('recipes.yourWeeklyPlan')}</h2>
             <div className="flex gap-2">
-              <button
-                onClick={() => setWeeklyPlan([])}
-                className="bg-gray-100 text-gray-500 px-4 py-2 rounded-xl font-bold hover:bg-gray-200 transition-colors shadow-sm"
-              >
+              <button onClick={() => setWeeklyPlan([])} className="bg-gray-100 text-gray-500 px-4 py-2 rounded-xl font-bold hover:bg-gray-200 transition-colors text-sm">
                 {t('common.cancel')}
               </button>
-              <button
-                onClick={addToCalendarWeekly}
-                className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold flex items-center space-x-2 hover:bg-emerald-700 transition-colors shadow-sm"
-              >
-                <Calendar size={16} />
-                <span>{t('recipes.saveWeek')}</span>
+              <button onClick={() => addWeek({ recipes: weeklyPlan, startDate: targetDate })} className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-700 transition-colors text-sm shadow-md">
+                <Save size={16} />
+                {t('recipes.saveWeek')}
               </button>
             </div>
           </div>
-          {weeklyPlan.map((dayRecipe, idx) => (
-            <div key={idx} className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
-              <button
-                onClick={() => setExpandedDay(expandedDay === idx ? null : idx)}
-                className="w-full flex items-center justify-between p-5 hover:bg-gray-50 transition-colors"
-              >
-                <div className="flex items-center space-x-4">
-                  <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center font-bold text-sm">
-                    {dayRecipe.day.substring(0, 2)}
-                  </div>
-                  <div className="text-left">
-                    <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider">{dayRecipe.day}</p>
-                    <h3 className="font-semibold text-gray-900">{dayRecipe.title}</h3>
-                  </div>
-                </div>
-                {expandedDay === idx ? <ChevronDown size={20} className="text-gray-400" /> : <ChevronRight size={20} className="text-gray-400" />}
-              </button>
 
-              {expandedDay === idx && (
-                <div className="p-5 border-t border-gray-50 bg-gray-50/30">
-                  <RecipeCard
-                    recipe={dayRecipe}
-                    onCook={() => handleCook(dayRecipe)}
-                    onBring={() => addToBringFromRecipe(dayRecipe)}
-                    compact
-                  />
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {cookedResult && (
-        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 text-center space-y-6 animate-in zoom-in-95 duration-300">
-          <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle2 size={40} className="text-emerald-600" />
+          <div className="space-y-4">
+            {weeklyPlan.map((dayRecipe, idx) => (
+              <div key={idx} className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                <button
+                  onClick={() => setExpandedDay(expandedDay === idx ? null : idx)}
+                  className="w-full px-6 py-5 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center font-bold text-sm">
+                      {new Date(dayRecipe.date).toLocaleDateString(i18n.language === 'de' ? 'de-DE' : 'en-US', { weekday: 'short' })}
+                    </div>
+                    <div className="text-left">
+                      <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-0.5">{dayRecipe.day}</p>
+                      <h3 className="font-bold text-gray-900 truncate max-w-[200px]">{dayRecipe.title}</h3>
+                    </div>
+                  </div>
+                  {expandedDay === idx ? <ChevronDown size={20} className="text-gray-400" /> : <ChevronRight size={20} className="text-gray-400" />}
+                </button>
+                <AnimatePresence>
+                  {expandedDay === idx && (
+                    <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="border-t border-gray-50 p-6 bg-gray-50/30">
+                      <RecipeCard recipe={dayRecipe} onCook={() => {}} onBring={() => addToBringFromRecipe(dayRecipe)} compact />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ))}
           </div>
-          <h2 className="text-2xl font-bold text-gray-900">{t('recipes.enjoyYourMeal')}</h2>
-          <p className="text-gray-600">
-            {t('recipes.ingredientsDeducted')}
-          </p>
-
-          {cookedResult.missing.length > 0 && (
-            <div className="mt-8 text-left bg-orange-50 p-6 rounded-2xl border border-orange-100">
-              <h3 className="font-semibold text-orange-800 mb-2 flex items-center">
-                <ShoppingCart size={18} className="mr-2" />
-                {t('recipes.addToShoppingList')}
-              </h3>
-              <p className="text-sm text-orange-700 mb-4">
-                {t('recipes.ingredientsEmptyOrMissing')}
-              </p>
-              <ul className="list-disc pl-5 mb-4 text-sm text-orange-800 space-y-1">
-                {cookedResult.missing.map((m: string, i: number) => (
-                  <li key={i}>{m}</li>
-                ))}
-              </ul>
-              <button
-                onClick={() => addToBring(cookedResult.missing)}
-                className="w-full bg-orange-600 text-white py-3 rounded-xl font-medium shadow-sm hover:bg-orange-700 transition-colors"
-              >
-                {t('recipes.addToBring')}
-              </button>
-            </div>
-          )}
-
-          <button
-            onClick={() => setCookedResult(null)}
-            className="w-full py-4 bg-gray-100 text-gray-700 rounded-xl font-semibold mt-4"
-          >
-            {t('common.back')}
-          </button>
         </div>
       )}
 
       {showWeeklyModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowWeeklyModal(false)}>
-          <div className="bg-white w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-white shrink-0">
-              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                <Calendar className="text-emerald-600" />
+          <div className="bg-white w-full max-w-md rounded-[40px] overflow-hidden shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300" onClick={e => e.stopPropagation()}>
+            <div className="p-8 border-b border-gray-50 flex items-center justify-between bg-white">
+              <h2 className="text-2xl font-black text-gray-900 flex items-center gap-3">
+                <Calendar className="text-emerald-600" size={28} />
                 Wochenplan
               </h2>
-              <button onClick={() => setShowWeeklyModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500">
-                <X size={20} />
+              <button onClick={() => setShowWeeklyModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-400">
+                <X size={24} />
               </button>
             </div>
             
-            <div className="p-6 overflow-y-auto flex-1 space-y-6">
+            <div className="p-8 overflow-y-auto flex-1 space-y-8">
               <div className="flex gap-4">
-                <div className="flex-1">
-                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('recipes.dateStart')}</label>
+                <div className="flex-1 group">
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">{t('recipes.dateStart')}</label>
                   <input
                     type="date"
                     value={targetDate}
                     onChange={e => setTargetDate(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-bold text-gray-800"
+                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-bold text-gray-800 shadow-inner"
                   />
                 </div>
-                <div className="w-32">
-                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Tage</label>
+                <div className="w-28 group">
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-500 transition-colors">Tage</label>
                   <input
                     type="number"
                     min="1"
                     max="14"
                     value={planDaysCount}
                     onChange={e => setPlanDaysCount(parseInt(e.target.value) || 1)}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-bold text-gray-800"
+                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-bold text-gray-800 shadow-inner text-center"
                   />
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Details pro Tag</label>
+              <div className="space-y-4">
+                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Details pro Tag</label>
                 {planSettings.map((setting, index) => (
-                  <div key={setting.date} className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-100">
-                    <div className="w-16 shrink-0 text-center">
-                      <span className="text-xs font-bold text-emerald-600">
-                        {new Date(setting.date).toLocaleDateString(t('common.dateLocale') || 'de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                  <div key={setting.date} className="flex items-center gap-4 bg-gray-50 p-4 rounded-3xl border border-gray-100 shadow-sm">
+                    <div className="w-14 shrink-0 text-center flex flex-col">
+                      <span className="text-[10px] font-black text-emerald-600 uppercase">
+                        {new Date(setting.date).toLocaleDateString(i18n.language === 'de' ? 'de-DE' : 'en-US', { weekday: 'short' })}
+                      </span>
+                      <span className="text-xs font-bold text-gray-400">
+                        {new Date(setting.date).toLocaleDateString(i18n.language === 'de' ? 'de-DE' : 'en-US', { day: '2-digit', month: '2-digit' })}
                       </span>
                     </div>
                     <div className="flex-1">
-                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Mahlzeiten</label>
+                      <label className="block text-[8px] font-bold text-gray-300 uppercase mb-1">Essen</label>
                       <select
                         value={setting.meals}
                         onChange={e => {
@@ -597,13 +394,13 @@ export default function Recipes() {
                           newSettings[index].meals = parseInt(e.target.value);
                           setPlanSettings(newSettings);
                         }}
-                        className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                        className="w-full bg-white border border-gray-100 rounded-xl px-2 py-2 text-xs font-bold text-gray-700 focus:ring-2 focus:ring-emerald-500 outline-none shadow-sm"
                       >
-                        {[1, 2, 3].map(n => <option key={n} value={n}>{n}</option>)}
+                        {[1, 2, 3].map(n => <option key={n} value={n}>{n}x</option>)}
                       </select>
                     </div>
                     <div className="flex-1">
-                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Portionen</label>
+                      <label className="block text-[8px] font-bold text-gray-300 uppercase mb-1">Portionen</label>
                       <input
                         type="number"
                         min="1"
@@ -613,7 +410,7 @@ export default function Recipes() {
                           newSettings[index].portions = parseInt(e.target.value) || 1;
                           setPlanSettings(newSettings);
                         }}
-                        className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none text-center"
+                        className="w-full bg-white border border-gray-100 rounded-xl px-2 py-2 text-xs font-bold text-gray-700 focus:ring-2 focus:ring-emerald-500 outline-none text-center shadow-sm"
                       />
                     </div>
                   </div>
@@ -621,18 +418,19 @@ export default function Recipes() {
               </div>
             </div>
 
-            <div className="p-4 border-t border-gray-100 bg-gray-50 shrink-0">
+            <div className="p-8 border-t border-gray-50 bg-white shrink-0">
               <button
-                onClick={generateWeeklyPlan}
-                className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold flex items-center justify-center space-x-2 hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-100"
+                onClick={handleGenerateWeekly}
+                className="w-full bg-emerald-600 text-white py-5 rounded-[24px] font-black text-lg uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-100 active:scale-95"
               >
-                Plan Generieren
+                Plan Erstellen
               </button>
             </div>
           </div>
         </div>
       )}
 
+      <Navigation />
     </div>
   );
 }
