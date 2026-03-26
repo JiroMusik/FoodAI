@@ -11,6 +11,7 @@ import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import Parser from 'rss-parser';
 
 const app = express();
@@ -81,6 +82,102 @@ const mapCategory = (rawCategory: string, productName: string): string => {
   
   return 'Sonstiges';
 };
+
+// --- Ingredient Matching (alias map + fuzzy matching) ---
+const normalizeIngredient = (s: string) => s.toLowerCase().replace(/\(.*?\)/g, '').replace(/[,\.]/g, '').replace(/\s+/g, ' ').trim();
+
+const germanStem = (s: string): string => {
+  if (s.length <= 3) return s;
+  for (const suffix of ['flöckchen', 'flocken', 'chen', 'lein', 'eln', 'ern', 'en', 'er', 'es', 'em', 'el', 'n', 'e', 's']) {
+    if (s.length - suffix.length >= 3 && s.endsWith(suffix)) {
+      return s.slice(0, -suffix.length);
+    }
+  }
+  return s;
+};
+
+// Resolve directory for ESM compatibility
+const serverDir = process.cwd();
+
+// Load alias file once at startup
+let ingredientAliasMap: Record<string, string[]> = {};
+for (const tryPath of [
+  path.join(serverDir, 'ingredient-aliases.json'),
+  path.join(serverDir, 'src', 'data', 'ingredient-aliases.json'),
+  path.join(process.cwd(), 'ingredient-aliases.json'),
+  '/app/ingredient-aliases.json'
+]) {
+  try {
+    ingredientAliasMap = JSON.parse(fs.readFileSync(tryPath, 'utf-8'));
+    console.log(`Loaded ${Object.keys(ingredientAliasMap).length} ingredient aliases from ${tryPath}`);
+    break;
+  } catch {}
+}
+if (Object.keys(ingredientAliasMap).length === 0) {
+  console.warn('WARNING: ingredient-aliases.json not found — ingredient matching will be degraded');
+}
+
+const ingredientAliasLookup: Record<string, string> = {};
+const ingredientAliasGroups: Record<string, string[]> = {};
+for (const [canonical, aliases] of Object.entries(ingredientAliasMap)) {
+  const canonLower = canonical.toLowerCase();
+  ingredientAliasGroups[canonLower] = aliases;
+  for (const alias of aliases) {
+    ingredientAliasLookup[alias] = canonLower;
+  }
+  ingredientAliasLookup[canonLower] = canonLower;
+}
+
+function getCanonicalNames(name: string): Set<string> {
+  const n = normalizeIngredient(name);
+  const results = new Set<string>();
+  results.add(n);
+  if (ingredientAliasLookup[n]) results.add(ingredientAliasLookup[n]);
+  const words = n.split(' ');
+  if (words.length > 1 && ingredientAliasLookup[words[0]]) results.add(ingredientAliasLookup[words[0]]);
+  const stemmed = germanStem(n);
+  if (stemmed !== n && ingredientAliasLookup[stemmed]) results.add(ingredientAliasLookup[stemmed]);
+  const stemmedFirst = germanStem(words[0]);
+  if (stemmedFirst !== words[0] && ingredientAliasLookup[stemmedFirst]) results.add(ingredientAliasLookup[stemmedFirst]);
+  for (const [alias, canonical] of Object.entries(ingredientAliasLookup)) {
+    if (alias.length >= 4 && n.includes(alias)) results.add(canonical);
+  }
+  return results;
+}
+
+function isIngredientInInventory(ingredientName: string, inventoryItems: { name: string; generic_name?: string | null }[]): boolean {
+  const ingCanonicals = getCanonicalNames(ingredientName);
+  const ingNorm = normalizeIngredient(ingredientName);
+  return inventoryItems.some(item => {
+    const itemCanonicals = getCanonicalNames(item.name);
+    const genericCanonicals = item.generic_name ? getCanonicalNames(item.generic_name) : new Set<string>();
+    const allItemCanonicals = new Set([...itemCanonicals, ...genericCanonicals]);
+    for (const ic of ingCanonicals) { if (allItemCanonicals.has(ic)) return true; }
+    const itemNorm = normalizeIngredient(item.name);
+    const genericNorm = item.generic_name ? normalizeIngredient(item.generic_name) : '';
+    if (ingNorm.length >= 4 && (itemNorm.includes(ingNorm) || genericNorm.includes(ingNorm))) return true;
+    if (itemNorm.length >= 4 && ingNorm.includes(itemNorm)) return true;
+    if (genericNorm.length >= 4 && ingNorm.includes(genericNorm)) return true;
+    const ingStem = germanStem(ingNorm.split(' ')[0]);
+    const itemStem = germanStem(itemNorm.split(' ')[0]);
+    if (ingStem.length >= 3 && itemStem.length >= 3 && ingStem === itemStem) return true;
+    for (const itemCanon of allItemCanonicals) {
+      const group = ingredientAliasGroups[itemCanon];
+      if (group) {
+        for (const ic of ingCanonicals) {
+          if (ic.length >= 4) {
+            for (const alias of group) { if (alias.includes(ic)) return true; }
+          }
+        }
+      }
+    }
+    return false;
+  });
+}
+
+function matchRecipeIngredients(ingredients: { name: string; in_inventory?: boolean }[], inventoryItems: { name: string; generic_name?: string | null }[]): void {
+  for (const ing of ingredients) { ing.in_inventory = isIngredientInInventory(ing.name, inventoryItems); }
+}
 
 // Initialize SQLite Database
 const dbDir = process.env.DB_DIR || process.cwd();
@@ -1726,56 +1823,10 @@ app.post('/api/recipes/import', async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    // Check which ingredients are in inventory using alias map
+    // Check which ingredients are in inventory using reusable matching
     const items = db.prepare('SELECT name, generic_name, quantity, unit FROM items WHERE quantity > 0').all() as any[];
-    const normalize = (s: string) => s.toLowerCase().replace(/\(.*?\)/g, '').replace(/[,\.]/g, '').replace(/\s+/g, ' ').trim();
-
-    // Load ingredient alias map
-    let aliasMap: Record<string, string[]> = {};
-    try { aliasMap = JSON.parse(fs.readFileSync(path.join(__dirname, 'src', 'data', 'ingredient-aliases.json'), 'utf-8')); } catch {}
-    // Fallback: try dist location
-    if (Object.keys(aliasMap).length === 0) {
-      try { aliasMap = JSON.parse(fs.readFileSync(path.join(__dirname, 'ingredient-aliases.json'), 'utf-8')); } catch {}
-    }
-
-    // Build reverse lookup: alias → canonical name
-    const aliasLookup: Record<string, string> = {};
-    for (const [canonical, aliases] of Object.entries(aliasMap)) {
-      for (const alias of aliases) {
-        aliasLookup[alias] = canonical.toLowerCase();
-      }
-      aliasLookup[canonical.toLowerCase()] = canonical.toLowerCase();
-    }
-
-    const getCanonicals = (name: string): string[] => {
-      const n = normalize(name);
-      const results = new Set<string>();
-      results.add(n);
-      // Exact alias match
-      if (aliasLookup[n]) results.add(aliasLookup[n]);
-      // First word match
-      const firstWord = n.split(' ')[0];
-      if (aliasLookup[firstWord]) results.add(aliasLookup[firstWord]);
-      // Partial match — only if alias is a meaningful substring of the name (not vice versa)
-      for (const [alias, canonical] of Object.entries(aliasLookup)) {
-        if (alias.length >= 4 && n.includes(alias)) {
-          results.add(canonical);
-        }
-      }
-      return Array.from(results);
-    };
-
     if (result.ingredients) {
-      for (const ing of result.ingredients) {
-        const ingCanonicals = getCanonicals(ing.name);
-        const match = items.find((item: any) => {
-          const itemCanonicals = getCanonicals(item.name);
-          const genericCanonicals = item.generic_name ? getCanonicals(item.generic_name) : [];
-          const allItemCanonicals = new Set([...itemCanonicals, ...genericCanonicals]);
-          return ingCanonicals.some(ic => allItemCanonicals.has(ic));
-        });
-        ing.in_inventory = !!match;
-      }
+      matchRecipeIngredients(result.ingredients, items);
     }
 
     res.json(result);
@@ -2309,36 +2360,3 @@ async function startServer() {
 }
 
 startServer();
-
-  const certDir = process.env.DB_DIR || process.cwd();
-  const keyPath = path.join(certDir, 'server.key');
-  const certPath = path.join(certDir, 'server.cert');
-
-  if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
-    console.log('Generating self-signed certificate...');
-    const { execFileSync } = await import('child_process');
-    execFileSync('openssl', [
-      'req', '-x509', '-newkey', 'rsa:2048',
-      '-keyout', keyPath, '-out', certPath,
-      '-days', '3650', '-nodes', '-subj', '/CN=foodai'
-    ], { stdio: 'pipe' });
-  }
-
-  const sslOptions = {
-    key: fs.readFileSync(keyPath),
-    cert: fs.readFileSync(certPath),
-  };
-
-  https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on https://0.0.0.0:${PORT}`);
-  });
-
-  // HTTP on port 3001 for local iframe embedding (MagicMirror)
-  const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3001');
-  http.createServer(app).listen(HTTP_PORT, '127.0.0.1', () => {
-    console.log(`HTTP server on http://127.0.0.1:${HTTP_PORT} (for local iframe embedding)`);
-  });
-}
-
-startServer();
-();

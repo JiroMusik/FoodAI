@@ -182,7 +182,6 @@ export default function Dashboard() {
                 ))}
               </div>
             )}
-            )}
           </section>
 
           {/* Two columns: Expiring + Opened */}
