@@ -267,15 +267,6 @@ export default function Recipes() {
           <div className="space-y-4">
             <div className="flex space-x-4">
               <div className="flex-1">
-                <label className="block text-sm font-medium text-gray-700 mb-2">{t('recipes.dateStart')}</label>
-                <input
-                  type="date"
-                  value={targetDate}
-                  onChange={e => setTargetDate(e.target.value)}
-                  className="w-full border border-gray-200 rounded-2xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
-              <div className="w-32">
                 <label className="block text-sm font-medium text-gray-700 mb-2">{t('recipes.portionsLabel')}</label>
                 <input
                   type="number"
@@ -333,11 +324,11 @@ export default function Recipes() {
                 <span>{t('recipes.singleRecipe')}</span>
               </button>
               <button
-                onClick={generateWeeklyPlan}
+                onClick={() => setShowWeeklyModal(true)}
                 disabled={loading}
                 className="flex-1 bg-gray-900 text-white py-4 rounded-2xl font-semibold flex items-center justify-center space-x-2 hover:bg-gray-800 transition-colors disabled:opacity-50 shadow-lg shadow-gray-200"
               >
-                {loading && mode === 'weekly' ? <Loader2 className="animate-spin" size={20} /> : <Calendar size={20} />}
+                <Calendar size={20} />
                 <span>{t('recipes.weeklyPlan')}</span>
               </button>
             </div>
@@ -441,13 +432,21 @@ export default function Recipes() {
         <div className="space-y-4">
           <div className="flex items-center justify-between px-2">
             <h2 className="text-xl font-bold">{t('recipes.yourWeeklyPlan')}</h2>
-            <button
-              onClick={addToCalendarWeekly}
-              className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold flex items-center space-x-2 hover:bg-emerald-700 transition-colors shadow-sm"
-            >
-              <Calendar size={16} />
-              <span>{t('recipes.saveWeek')}</span>
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setWeeklyPlan([])}
+                className="bg-gray-100 text-gray-500 px-4 py-2 rounded-xl font-bold hover:bg-gray-200 transition-colors shadow-sm"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={addToCalendarWeekly}
+                className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold flex items-center space-x-2 hover:bg-emerald-700 transition-colors shadow-sm"
+              >
+                <Calendar size={16} />
+                <span>{t('recipes.saveWeek')}</span>
+              </button>
+            </div>
           </div>
           {weeklyPlan.map((dayRecipe, idx) => (
             <div key={idx} className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
@@ -523,6 +522,98 @@ export default function Recipes() {
           </button>
         </div>
       )}
+
+      {showWeeklyModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowWeeklyModal(false)}>
+          <div className="bg-white w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-white shrink-0">
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <Calendar className="text-emerald-600" />
+                Wochenplan
+              </h2>
+              <button onClick={() => setShowWeeklyModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1 space-y-6">
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('recipes.dateStart')}</label>
+                  <input
+                    type="date"
+                    value={targetDate}
+                    onChange={e => setTargetDate(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-bold text-gray-800"
+                  />
+                </div>
+                <div className="w-32">
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Tage</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="14"
+                    value={planDaysCount}
+                    onChange={e => setPlanDaysCount(parseInt(e.target.value) || 1)}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-bold text-gray-800"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Details pro Tag</label>
+                {planSettings.map((setting, index) => (
+                  <div key={setting.date} className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                    <div className="w-16 shrink-0 text-center">
+                      <span className="text-xs font-bold text-emerald-600">
+                        {new Date(setting.date).toLocaleDateString(t('common.dateLocale') || 'de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                      </span>
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Mahlzeiten</label>
+                      <select
+                        value={setting.meals}
+                        onChange={e => {
+                          const newSettings = [...planSettings];
+                          newSettings[index].meals = parseInt(e.target.value);
+                          setPlanSettings(newSettings);
+                        }}
+                        className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                      >
+                        {[1, 2, 3].map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Portionen</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={setting.portions}
+                        onChange={e => {
+                          const newSettings = [...planSettings];
+                          newSettings[index].portions = parseInt(e.target.value) || 1;
+                          setPlanSettings(newSettings);
+                        }}
+                        className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none text-center"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-gray-100 bg-gray-50 shrink-0">
+              <button
+                onClick={generateWeeklyPlan}
+                className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold flex items-center justify-center space-x-2 hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-100"
+              >
+                Plan Generieren
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

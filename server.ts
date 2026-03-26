@@ -1439,11 +1439,12 @@ app.post('/api/calendar/week', (req, res) => {
   try {
     const stmt = db.prepare('INSERT INTO planned_recipes (date, title, description, ingredients, instructions, portions, base_portions) VALUES (?, ?, ?, ?, ?, ?, ?)');
     db.transaction(() => {
+      // In the new schema, r.date is explicitly provided by the AI prompt
       recipes.forEach((r: any, index: number) => {
-        const d = new Date(startDate);
-        d.setDate(d.getDate() + index);
-        const dateStr = d.toISOString().split('T')[0];
-        stmt.run(dateStr, r.title, r.description, JSON.stringify(r.ingredients), JSON.stringify(r.instructions), portions, portions);
+        // Fallback for old requests without specific dates
+        const recipeDate = r.date || (startDate ? new Date(new Date(startDate).getTime() + index * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+        const recipePortions = r.portions || portions || 2;
+        stmt.run(recipeDate, r.title, r.description, JSON.stringify(r.ingredients), JSON.stringify(r.instructions), recipePortions, recipePortions);
       });
     })();
     res.json({ success: true });
@@ -2096,6 +2097,38 @@ async function startServer() {
   }
 
   // HTTPS with self-signed cert for camera access on mobile
+  const certDir = process.env.DB_DIR || process.cwd();
+  const keyPath = path.join(certDir, 'server.key');
+  const certPath = path.join(certDir, 'server.cert');
+
+  if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+    console.log('Generating self-signed certificate...');
+    const { execFileSync } = await import('child_process');
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048',
+      '-keyout', keyPath, '-out', certPath,
+      '-days', '3650', '-nodes', '-subj', '/CN=foodai'
+    ], { stdio: 'pipe' });
+  }
+
+  const sslOptions = {
+    key: fs.readFileSync(keyPath),
+    cert: fs.readFileSync(certPath),
+  };
+
+  https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on https://0.0.0.0:${PORT}`);
+  });
+
+  // HTTP on port 3001 for local iframe embedding (MagicMirror)
+  const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3001');
+  http.createServer(app).listen(HTTP_PORT, '127.0.0.1', () => {
+    console.log(`HTTP server on http://127.0.0.1:${HTTP_PORT} (for local iframe embedding)`);
+  });
+}
+
+startServer();
+
   const certDir = process.env.DB_DIR || process.cwd();
   const keyPath = path.join(certDir, 'server.key');
   const certPath = path.join(certDir, 'server.cert');
