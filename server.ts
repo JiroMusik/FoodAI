@@ -407,10 +407,10 @@ app.get('/api/shopping-list', (req, res) => {
       });
     });
 
-    const inventory = db.prepare('SELECT name, generic_name, quantity, unit, min_stock FROM items WHERE quantity > 0').all() as any[];
+    const inventory = db.prepare('SELECT name, generic_name, quantity, unit, min_stock, category FROM items WHERE quantity > 0').all() as any[];
 
     // Add items that are below minimum stock
-    const allKnownItems = db.prepare('SELECT name, generic_name, quantity, unit, min_stock FROM items').all() as any[];
+    const allKnownItems = db.prepare('SELECT name, generic_name, quantity, unit, min_stock, category FROM items').all() as any[];
     const lowStockItems: Record<string, { amount: number, unit: string, name: string }> = {};
     
     // Group by name and unit for min_stock check
@@ -424,21 +424,41 @@ app.get('/api/shopping-list', (req, res) => {
       stockLevels[key].total += smallest.amount;
     });
 
+    // Min-stock: for spices show as "1 Packung", for others show deficit amount
     Object.entries(stockLevels).forEach(([key, level]) => {
       if (level.min > 0 && level.total < level.min) {
         const name = key.split('_')[0];
-        const missing = level.min - level.total;
-        if (!required[key]) {
-          required[key] = { amount: 0, unit: level.unit, name: name.charAt(0).toUpperCase() + name.slice(1) };
+        const item = allKnownItems.find(i => i.name.toLowerCase() === name);
+        if (item?.category === 'Gewürze') {
+          // Spices: add as "1 Packung"
+          const spiceKey = `${name}_Stück`;
+          if (!required[spiceKey]) {
+            required[spiceKey] = { amount: 0, unit: 'Stück', name: name.charAt(0).toUpperCase() + name.slice(1) };
+          }
+          required[spiceKey].amount = 1;
+        } else {
+          const missing = level.min - level.total;
+          if (!required[key]) {
+            required[key] = { amount: 0, unit: level.unit, name: name.charAt(0).toUpperCase() + name.slice(1) };
+          }
+          required[key].amount += missing;
         }
-        required[key].amount += missing;
       }
     });
 
     const missingIngredients: any[] = [];
 
     Object.values(required).forEach((reqIng: any) => {
-      // Use canonical alias matching (same as recipe ingredient checking)
+      // Spices: if any matching item exists with quantity > 0, it's available (regardless of unit mismatch g vs %)
+      const anyMatchInInventory = inventory.some(inv => isIngredientInInventory(reqIng.name, [inv]));
+      if (anyMatchInInventory) {
+        const matchedItem = inventory.find(inv => isIngredientInInventory(reqIng.name, [inv]));
+        if (matchedItem?.category === 'Gewürze' && matchedItem.quantity > 0) {
+          return; // Spice is in stock, skip
+        }
+      }
+
+      // Standard matching with unit awareness
       const matchingItems = inventory.filter(inv => {
         if (!isIngredientInInventory(reqIng.name, [inv])) return false;
         const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
