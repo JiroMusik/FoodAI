@@ -1648,23 +1648,48 @@ app.post('/api/recipes/import', async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    // Check which ingredients are in inventory
+    // Check which ingredients are in inventory using alias map
     const items = db.prepare('SELECT name, generic_name, quantity, unit FROM items WHERE quantity > 0').all() as any[];
     const normalize = (s: string) => s.toLowerCase().replace(/\(.*?\)/g, '').replace(/[,\.]/g, '').replace(/\s+/g, ' ').trim();
-    const stemMatch = (a: string, b: string) => {
-      const na = normalize(a), nb = normalize(b);
-      if (na.includes(nb) || nb.includes(na)) return true;
-      // Match base word (first 4+ chars) for plural tolerance: zwiebel/zwiebeln, tomate/tomaten
-      const baseA = na.split(' ')[0].slice(0, Math.max(4, Math.floor(na.split(' ')[0].length * 0.7)));
-      const baseB = nb.split(' ')[0].slice(0, Math.max(4, Math.floor(nb.split(' ')[0].length * 0.7)));
-      return baseA === baseB || na.split(' ')[0].startsWith(baseB) || nb.split(' ')[0].startsWith(baseA);
+
+    // Load ingredient alias map
+    let aliasMap: Record<string, string[]> = {};
+    try { aliasMap = JSON.parse(fs.readFileSync(path.join(__dirname, 'src', 'data', 'ingredient-aliases.json'), 'utf-8')); } catch {}
+    // Fallback: try dist location
+    if (Object.keys(aliasMap).length === 0) {
+      try { aliasMap = JSON.parse(fs.readFileSync(path.join(__dirname, 'ingredient-aliases.json'), 'utf-8')); } catch {}
+    }
+
+    // Build reverse lookup: alias → canonical name
+    const aliasLookup: Record<string, string> = {};
+    for (const [canonical, aliases] of Object.entries(aliasMap)) {
+      for (const alias of aliases) {
+        aliasLookup[alias] = canonical.toLowerCase();
+      }
+      aliasLookup[canonical.toLowerCase()] = canonical.toLowerCase();
+    }
+
+    const getCanonical = (name: string): string => {
+      const n = normalize(name);
+      if (aliasLookup[n]) return aliasLookup[n];
+      // Try matching first word
+      const firstWord = n.split(' ')[0];
+      if (aliasLookup[firstWord]) return aliasLookup[firstWord];
+      // Try partial match
+      for (const [alias, canonical] of Object.entries(aliasLookup)) {
+        if (n.includes(alias) || alias.includes(n)) return canonical;
+      }
+      return n;
     };
+
     if (result.ingredients) {
       for (const ing of result.ingredients) {
-        const match = items.find((item: any) =>
-          stemMatch(item.name, ing.name) ||
-          (item.generic_name && stemMatch(item.generic_name, ing.name))
-        );
+        const ingCanonical = getCanonical(ing.name);
+        const match = items.find((item: any) => {
+          const itemCanonical = getCanonical(item.name);
+          const genericCanonical = item.generic_name ? getCanonical(item.generic_name) : '';
+          return itemCanonical === ingCanonical || genericCanonical === ingCanonical;
+        });
         ing.in_inventory = !!match;
       }
     }

@@ -7,7 +7,7 @@ WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY --chown=node:node server.ts tsconfig.json ./
+COPY --chown=node:node server.ts tsconfig.json ingredient-aliases.json ./
 COPY --chown=node:node dist/ dist/
 
 RUN mkdir -p /app/data && chown node:node /app/data
