@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChefHat, Loader2, ShoppingCart, CheckCircle2, Calendar, Utensils, ChevronRight, ChevronDown, Heart, Star, X } from 'lucide-react';
+import { ChefHat, Loader2, ShoppingCart, CheckCircle2, Calendar, Utensils, ChevronRight, ChevronDown, Heart, Star, X, Link2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { Recipe } from '../types.ts';
 import RecipeCard from '../components/RecipeCard';
@@ -26,6 +26,8 @@ export default function Recipes() {
   const [maxExtraItems, setMaxExtraItems] = useState(3);
   const [favorites, setFavorites] = useState<any[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [showImport, setShowImport] = useState(false);
 
   useEffect(() => {
     if (recipe) localStorage.setItem('currentRecipe', JSON.stringify(recipe));
@@ -181,6 +183,33 @@ export default function Recipes() {
     } catch (e) { toast.error(t('common.error')); }
   };
 
+  const importFromUrl = async () => {
+    if (!importUrl.trim()) return;
+    setLoading(true);
+    setRecipe(null);
+    setMode('single');
+    setShowImport(false);
+    try {
+      const res = await fetch('/api/recipes/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: importUrl.trim() })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Import failed');
+      }
+      const data = await res.json();
+      setRecipe(data);
+      setImportUrl('');
+      toast.success(t('recipes.importSuccess'));
+    } catch (error: any) {
+      toast.error(error.message || t('recipes.importError'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const addToCalendarSingle = async () => {
     if (!recipe) return;
     try {
@@ -312,6 +341,35 @@ export default function Recipes() {
                 <span>{t('recipes.weeklyPlan')}</span>
               </button>
             </div>
+
+            {/* Import from URL */}
+            <button
+              onClick={() => setShowImport(!showImport)}
+              className="w-full py-3 text-sm font-medium text-gray-500 hover:text-emerald-600 flex items-center justify-center gap-2 transition-colors"
+            >
+              <Link2 size={16} />
+              {t('recipes.importFromUrl')}
+            </button>
+
+            {showImport && (
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={importUrl}
+                  onChange={e => setImportUrl(e.target.value)}
+                  placeholder={t('recipes.importUrlPlaceholder')}
+                  className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                  onKeyDown={e => e.key === 'Enter' && importFromUrl()}
+                />
+                <button
+                  onClick={importFromUrl}
+                  disabled={loading || !importUrl.trim()}
+                  className="px-6 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                >
+                  {t('recipes.import')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -1572,6 +1572,168 @@ app.put('/api/calendar/:id/portions', (req, res) => {
 });
 
 // --- Favorite Recipes ---
+// --- Recipe Import from URL ---
+app.post('/api/recipes/import', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'No URL provided' });
+
+  try {
+    // Fetch the webpage
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FoodAI/1.0)' }
+    });
+    if (!response.ok) throw new Error('Failed to fetch URL: ' + response.status);
+
+    const html = await response.text();
+
+    // Extract text content (strip HTML tags, limit size for AI)
+    const textContent = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 8000);
+
+    // Also try to extract JSON-LD recipe schema
+    const jsonLdMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/gi);
+    let schemaRecipe = '';
+    if (jsonLdMatch) {
+      for (const match of jsonLdMatch) {
+        const jsonStr = match.replace(/<script[^>]*>/, '').replace(/<\/script>/, '');
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const recipe = Array.isArray(parsed) ? parsed.find((p: any) => p['@type'] === 'Recipe') : (parsed['@type'] === 'Recipe' ? parsed : null);
+          if (recipe) {
+            schemaRecipe = JSON.stringify(recipe).slice(0, 4000);
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    const lang = (db.prepare("SELECT value FROM settings WHERE key = 'language'").get() as any)?.value || 'de';
+    const langName = lang === 'de' ? 'German' : lang === 'es' ? 'Spanish' : 'English';
+
+    const prompt = `Extract a recipe from this webpage content. ${schemaRecipe ? 'JSON-LD Schema found: ' + schemaRecipe : ''}\n\nPage text: ${textContent}\n\nReturn a JSON object with:\n- title: Recipe title (in ${langName})\n- description: Short description (in ${langName})\n- ingredients: Array of { name (${langName}), amount (number), unit (string), in_inventory: false }\n- instructions: Array of step strings (in ${langName})\n\nIf the page is not a recipe, return { "error": "No recipe found" }.`;
+
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING },
+        description: { type: Type.STRING },
+        error: { type: Type.STRING },
+        ingredients: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              amount: { type: Type.NUMBER },
+              unit: { type: Type.STRING },
+              in_inventory: { type: Type.BOOLEAN }
+            },
+            required: ["name", "amount", "unit", "in_inventory"]
+          }
+        },
+        instructions: { type: Type.ARRAY, items: { type: Type.STRING } }
+      },
+      required: ["title"]
+    };
+
+    const result = await getAIResponse(prompt, undefined, schema);
+
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    // Check which ingredients are in inventory
+    const items = db.prepare('SELECT name, generic_name, quantity, unit FROM items WHERE quantity > 0').all() as any[];
+    if (result.ingredients) {
+      for (const ing of result.ingredients) {
+        const match = items.find((item: any) =>
+          item.name.toLowerCase().includes(ing.name.toLowerCase()) ||
+          ing.name.toLowerCase().includes(item.name.toLowerCase()) ||
+          (item.generic_name && item.generic_name.toLowerCase().includes(ing.name.toLowerCase()))
+        );
+        ing.in_inventory = !!match;
+      }
+    }
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Recipe import error:', error);
+    res.status(500).json({ error: 'Failed to import recipe: ' + (error.message || 'Unknown error') });
+  }
+});
+
+// --- Voice API for HA integration ---
+app.get('/api/voice/expiring', (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const threeDays = new Date();
+    threeDays.setDate(threeDays.getDate() + 3);
+    const threeDaysStr = threeDays.toISOString().split('T')[0];
+
+    const items = db.prepare('SELECT name, expiry_date, quantity, unit FROM items WHERE expiry_date <= ? AND expiry_date >= ? AND quantity > 0 ORDER BY expiry_date ASC').all(threeDaysStr, today) as any[];
+    const expired = db.prepare('SELECT name, expiry_date FROM items WHERE expiry_date < ? AND quantity > 0 ORDER BY expiry_date ASC').all(today) as any[];
+
+    const lang = (req.query.lang as string) || 'de';
+    let text = '';
+
+    if (lang === 'de') {
+      if (expired.length > 0) {
+        text += 'Bereits abgelaufen: ' + expired.map((i: any) => i.name).join(', ') + '. ';
+      }
+      if (items.length > 0) {
+        text += 'Bald ablaufend: ' + items.map((i: any) => {
+          const days = Math.ceil((new Date(i.expiry_date).getTime() - new Date().getTime()) / 86400000);
+          return i.name + (days <= 0 ? ' (heute)' : days === 1 ? ' (morgen)' : ` (in ${days} Tagen)`);
+        }).join(', ') + '.';
+      }
+      if (!text) text = 'Alles in Ordnung, nichts läuft bald ab.';
+    } else {
+      if (expired.length > 0) {
+        text += 'Already expired: ' + expired.map((i: any) => i.name).join(', ') + '. ';
+      }
+      if (items.length > 0) {
+        text += 'Expiring soon: ' + items.map((i: any) => {
+          const days = Math.ceil((new Date(i.expiry_date).getTime() - new Date().getTime()) / 86400000);
+          return i.name + (days <= 0 ? ' (today)' : days === 1 ? ' (tomorrow)' : ` (in ${days} days)`);
+        }).join(', ') + '.';
+      }
+      if (!text) text = 'All good, nothing expiring soon.';
+    }
+
+    res.json({ text, expired_count: expired.length, expiring_count: items.length });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch expiring items' });
+  }
+});
+
+app.get('/api/voice/inventory-summary', (req, res) => {
+  try {
+    const totalItems = (db.prepare('SELECT COUNT(*) as cnt FROM items WHERE quantity > 0').get() as any)?.cnt || 0;
+    const openItems = (db.prepare('SELECT COUNT(*) as cnt FROM items WHERE is_open = 1 AND quantity > 0').get() as any)?.cnt || 0;
+    const totalValue = (db.prepare('SELECT SUM(price * quantity) as value FROM items WHERE price IS NOT NULL').get() as any)?.value || 0;
+    const categories = db.prepare('SELECT category, COUNT(*) as cnt FROM items WHERE quantity > 0 GROUP BY category ORDER BY cnt DESC').all() as any[];
+
+    const lang = (req.query.lang as string) || 'de';
+    let text = '';
+    if (lang === 'de') {
+      text = `Du hast ${totalItems} Packungen im Vorrat, davon ${openItems} geöffnet. Gesamtwert: ${totalValue.toFixed(2)} Euro. `;
+      text += 'Kategorien: ' + categories.map((c: any) => `${c.category} (${c.cnt})`).join(', ') + '.';
+    } else {
+      text = `You have ${totalItems} packages in stock, ${openItems} opened. Total value: ${totalValue.toFixed(2)} EUR. `;
+      text += 'Categories: ' + categories.map((c: any) => `${c.category} (${c.cnt})`).join(', ') + '.';
+    }
+
+    res.json({ text, total_items: totalItems, open_items: openItems, total_value: totalValue });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch inventory summary' });
+  }
+});
+
 app.get('/api/recipes/favorites', (req, res) => {
   try {
     const favorites = db.prepare('SELECT * FROM favorite_recipes ORDER BY created_at DESC').all();

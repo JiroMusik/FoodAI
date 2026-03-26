@@ -190,7 +190,12 @@
     "savedAsFavorite": "Saved as favorite!",
     "favoriteRemoved": "Favorite removed",
     "addedToCalendar": "Added to calendar",
-    "weekSavedToCalendar": "Week saved to calendar"
+    "weekSavedToCalendar": "Week saved to calendar",
+    "importFromUrl": "Import recipe from URL",
+    "importUrlPlaceholder": "https://www.allrecipes.com/recipe/...",
+    "import": "Import",
+    "importSuccess": "Recipe imported!",
+    "importError": "Import failed"
   },
   "calendar": {
     "title": "Meal Calendar",

@@ -190,7 +190,12 @@
     "savedAsFavorite": "Guardado como favorito!",
     "favoriteRemoved": "Favorito eliminado",
     "addedToCalendar": "Agregado al calendario",
-    "weekSavedToCalendar": "Semana guardada en el calendario"
+    "weekSavedToCalendar": "Semana guardada en el calendario",
+    "importFromUrl": "Importar receta desde URL",
+    "importUrlPlaceholder": "https://www.recetasgratis.net/...",
+    "import": "Importar",
+    "importSuccess": "Receta importada!",
+    "importError": "Error al importar"
   },
   "calendar": {
     "title": "Calendario de comidas",

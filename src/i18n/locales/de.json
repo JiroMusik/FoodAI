@@ -195,7 +195,12 @@
     "savedAsFavorite": "Als Favorit gespeichert!",
     "favoriteRemoved": "Favorit entfernt",
     "addedToCalendar": "Zum Kalender hinzugefügt",
-    "weekSavedToCalendar": "Woche im Kalender gespeichert"
+    "weekSavedToCalendar": "Woche im Kalender gespeichert",
+    "importFromUrl": "Rezept von URL importieren",
+    "importUrlPlaceholder": "https://www.chefkoch.de/rezepte/...",
+    "import": "Importieren",
+    "importSuccess": "Rezept importiert!",
+    "importError": "Import fehlgeschlagen"
   },
   "calendar": {
     "title": "Mahlzeiten-Kalender",
