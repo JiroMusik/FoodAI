@@ -14,9 +14,9 @@ const INITIAL_PROVIDERS = [
 ];
 
 const IMAGE_PROVIDERS = [
-  { id: 'openai', name: 'OpenAI (DALL-E)', defaultModel: 'dall-e-3' },
-  { id: 'gemini', name: 'Gemini Imagen', defaultModel: 'gemini-2.0-flash-preview-image-generation' },
-  { id: 'stability', name: 'Stability AI', defaultModel: 'sd3.5-large' },
+  { id: 'openai', name: 'OpenAI (DALL-E)', models: ['dall-e-3', 'dall-e-2'] },
+  { id: 'gemini', name: 'Gemini Imagen', models: ['gemini-2.0-flash-preview-image-generation', 'imagen-3.0-generate-002'] },
+  { id: 'stability', name: 'Stability AI', models: ['sd3.5-large', 'sd3.5-medium', 'sd3-large'] },
 ];
 
 export default function Settings() {
@@ -339,13 +339,13 @@ export default function Settings() {
             <span className="bg-amber-100 text-amber-600 p-2 rounded-lg mr-3">
               <ImagePlus size={20} />
             </span>
-            {t('settings.imageGeneration') || 'Bildgenerierung'}
+            {t('settings.imageGeneration')}
           </h2>
 
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t('settings.imageProvider') || 'Anbieter'}
+                {t('settings.imageProvider')}
               </label>
               <select
                 value={settings.image_provider}
@@ -354,7 +354,7 @@ export default function Settings() {
                   setSettings({
                     ...settings,
                     image_provider: e.target.value,
-                    image_model: ''
+                    image_model: imgProvider?.models[0] || ''
                   });
                 }}
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
@@ -367,30 +367,32 @@ export default function Settings() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t('settings.imageModel') || 'Modell'}
+                {t('settings.imageModel')}
               </label>
-              <input
-                type="text"
-                value={settings.image_model}
+              <select
+                value={settings.image_model || currentImageProvider?.models[0] || ''}
                 onChange={e => setSettings({...settings, image_model: e.target.value})}
-                className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
-                placeholder={currentImageProvider?.defaultModel || 'dall-e-3'}
-              />
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+              >
+                {currentImageProvider?.models.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
               <p className="text-xs text-gray-500 mt-1">
-                {t('settings.imageModelHint') || 'Leer lassen für Standardmodell'}
+                {t('settings.imageModelHint')}
               </p>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
-                <Key size={14} className="mr-1" /> {t('settings.imageApiKey') || 'API-Schlüssel'}
+                <Key size={14} className="mr-1" /> {t('settings.imageApiKey')}
               </label>
               <input
                 type="password"
                 value={settings.image_api_key}
                 onChange={e => setSettings({...settings, image_api_key: e.target.value})}
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
-                placeholder={`API Key für ${currentImageProvider?.name || 'OpenAI (DALL-E)'}`}
+                placeholder={t('settings.imageApiKeyPlaceholder', { provider: currentImageProvider?.name || 'OpenAI' })}
               />
             </div>
           </div>

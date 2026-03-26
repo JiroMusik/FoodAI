@@ -267,7 +267,13 @@
     "themeCustom": "Personalizado",
     "uploadCss": "Subir archivo CSS",
     "customCssLoaded": "CSS cargado",
-    "customCssActive": "CSS personalizado activo ({{size}} caracteres)"
+    "customCssActive": "CSS personalizado activo ({{size}} caracteres)",
+    "imageGeneration": "Generación de imágenes",
+    "imageProvider": "Proveedor de imágenes",
+    "imageModel": "Modelo de imagen",
+    "imageModelHint": "Dejar vacío para modelo predeterminado",
+    "imageApiKey": "Clave API de imagen",
+    "imageApiKeyPlaceholder": "Clave API para {{provider}}"
   },
   "shopping": {
     "title": "Lista de compras",

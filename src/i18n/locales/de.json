@@ -272,7 +272,13 @@
     "themeCustom": "Eigenes",
     "uploadCss": "CSS-Datei hochladen",
     "customCssLoaded": "CSS geladen",
-    "customCssActive": "Eigenes CSS aktiv ({{size}} Zeichen)"
+    "customCssActive": "Eigenes CSS aktiv ({{size}} Zeichen)",
+    "imageGeneration": "Bildgenerierung",
+    "imageProvider": "Bild-Anbieter",
+    "imageModel": "Bild-Modell",
+    "imageModelHint": "Leer lassen für Standardmodell",
+    "imageApiKey": "Bild API-Schlüssel",
+    "imageApiKeyPlaceholder": "API Key für {{provider}}"
   },
   "shopping": {
     "title": "Einkaufsliste",
