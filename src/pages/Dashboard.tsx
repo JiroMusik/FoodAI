@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle, PackageOpen, Calendar as CalendarIcon, Loader2, Settings, Sparkles, ExternalLink } from 'lucide-react';
+import { AlertTriangle, PackageOpen, Calendar as CalendarIcon, Loader2, Settings, Sparkles, ExternalLink, Heart } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import RecipeCard from '../components/RecipeCard';
 import { InventoryItem, PlannedRecipe } from '../types.ts';
@@ -97,9 +97,14 @@ export default function Dashboard() {
             </span>
           </div>
         </div>
-        <button onClick={() => navigate('/settings')} className="p-2 text-gray-500 hover:text-gray-900 bg-gray-100 rounded-full">
-          <Settings size={20} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => navigate('/favorites')} className="p-2 text-gray-500 hover:text-rose-500 bg-gray-100 rounded-full">
+            <Heart size={20} />
+          </button>
+          <button onClick={() => navigate('/settings')} className="p-2 text-gray-500 hover:text-gray-900 bg-gray-100 rounded-full">
+            <Settings size={20} />
+          </button>
+        </div>
       </header>
 
       {/* 3-column layout: Feed | Main Content | empty or future widget */}

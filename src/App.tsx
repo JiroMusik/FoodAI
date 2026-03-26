@@ -14,6 +14,7 @@ import Calendar from './pages/Calendar';
 import FreeCook from './pages/FreeCook';
 import Settings from './pages/Settings';
 import ShoppingList from './pages/ShoppingList';
+import Favorites from './pages/Favorites';
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="/free-cook" element={<FreeCook />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/shopping-list" element={<ShoppingList />} />
+            <Route path="/favorites" element={<Favorites />} />
           </Routes>
         </main>
         <Navigation />
