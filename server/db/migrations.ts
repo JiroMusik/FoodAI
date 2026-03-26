@@ -129,6 +129,18 @@ export const runMigrations = (db: Database) => {
       stmtLookup.run(u.new, u.old);
     }
 
+    // Split "Gewürze & Saucen" into separate categories
+    const saucePattern = /sauce|ketchup|mayo|remoulade|senf|dressing|marinade|brühe|bouillon|fond|soja|worcester|tabasco|sriracha|pesto|saucenbinder|crema|aceto|balsamico/i;
+    const oldCatItems = db.prepare("SELECT id, name FROM items WHERE category = 'Gewürze & Saucen'").all() as any[];
+    const updateCat = db.prepare('UPDATE items SET category = ? WHERE id = ?');
+    for (const item of oldCatItems) {
+      if (saucePattern.test(item.name)) {
+        updateCat.run('Saucen', item.id);
+      } else {
+        updateCat.run('Gewürze', item.id);
+      }
+    }
+
     // Re-categorize all items for better consistency
     const items = db.prepare('SELECT id, name, category FROM items').all() as any[];
     const updateItemCat = db.prepare('UPDATE items SET category = ? WHERE id = ?');

@@ -505,7 +505,8 @@ export default function Scanner() {
                       <option value={t('categories.bakery')}>{t('categories.bakery')}</option>
                       <option value={t('categories.meatFish')}>{t('categories.meatFish')}</option>
                       <option value={t('categories.snacksSweets')}>{t('categories.snacksSweets')}</option>
-                      <option value={t('categories.spicesSauces')}>{t('categories.spicesSauces')}</option>
+                      <option value={t('categories.spices')}>{t('categories.spices')}</option>
+                      <option value={t('categories.sauces')}>{t('categories.sauces')}</option>
                       <option value={t('categories.householdDrugstore')}>{t('categories.householdDrugstore')}</option>
                       <option value={t('categories.other')}>{t('categories.other')}</option>
                     </select>

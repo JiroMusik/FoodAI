@@ -44,7 +44,8 @@
     "bakery": "Panaderia",
     "meatFish": "Carne y pescado",
     "snacksSweets": "Snacks y dulces",
-    "spicesSauces": "Especias y salsas",
+    "spices": "Especias",
+    "sauces": "Salsas",
     "householdDrugstore": "Hogar y drogueria",
     "other": "Otros"
   },

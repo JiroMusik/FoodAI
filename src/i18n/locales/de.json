@@ -44,7 +44,8 @@
     "bakery": "Backwaren",
     "meatFish": "Fleisch & Fisch",
     "snacksSweets": "Snacks & Süßigkeiten",
-    "spicesSauces": "Gewürze & Saucen",
+    "spices": "Gewürze",
+    "sauces": "Saucen",
     "householdDrugstore": "Haushalt & Drogerie",
     "other": "Sonstiges"
   },

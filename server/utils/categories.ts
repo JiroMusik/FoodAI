@@ -1,8 +1,10 @@
 export const mapCategory = (rawCategory: string, productName: string): string => {
   const text = `${rawCategory} ${productName}`.toLowerCase();
 
-  // Gewürze & Saucen ZUERST — viele Gewürze werden sonst als Gemüse/Fleisch/Getränke gematcht
-  if (text.match(/gewürz|spice|sauce|condiment|salz\b|pfeffer|ketchup|mayo|remoulade|senf|essig|öl\b|olivenöl|dressing|marinade|brühe|bouillon|fond|soja|worcester|tabasco|sriracha|pesto|curry|kurkuma|kümmel|basilikum|rosmarin|oregano|thymian|petersilie|schnittlauch|dill|muskatnuss|paprika.*scharf|chili|peperoncin|ras el hanout|garam masala|zimt|nelke|anis|koriander|knoblauch.*granul|zwiebel.*pulver|sesam.*paste|tahina|saucenbinder|röstzwiebel|hackfleisch.*würz|steak.*pfeffer|pizza.*gewürz|pasta.*würz|bolognese.*gewürz|ankerkraut|fuchs|ostmann|ubena|cornichon|olive|kapern|gewürzzubereitung/)) return 'Gewürze & Saucen';
+  // Saucen (werden schlecht — eigene Kategorie)
+  if (text.match(/sauce|ketchup|mayo|remoulade|senf|dressing|marinade|brühe|bouillon|fond|soja.*sauce|worcester|tabasco|sriracha|pesto|saucenbinder|crema.*aceto|balsamico/)) return 'Saucen';
+  // Gewürze (werden praktisch nicht schlecht)
+  if (text.match(/gewürz|spice|condiment|salz\b|pfeffer|curry|kurkuma|kümmel|basilikum|rosmarin|oregano|thymian|petersilie|schnittlauch|dill|muskatnuss|paprika.*scharf|chili|peperoncin|ras el hanout|garam masala|zimt|nelke|anis|koriander|knoblauch.*granul|zwiebel.*pulver|sesam.*paste|tahina|röstzwiebel|hackfleisch.*würz|steak.*pfeffer|pizza.*gewürz|pasta.*würz|bolognese.*gewürz|ankerkraut|fuchs|ostmann|ubena|gewürzzubereitung|cornichon|olive|kapern|essig|öl\b|olivenöl/)) return 'Gewürze';
   // Tiefkühl (hat Vorrang vor Fleisch/Fisch)
   if (text.match(/frozen|tiefkühl|tiefgefroren|tk[ -]|ice cream|eis am stiel|pizza.*frozen|iglo|frosta|bofrost|gefrier|golden longs|rösti.*stäbchen/)) return 'Tiefkühl';
   // Kühlregal

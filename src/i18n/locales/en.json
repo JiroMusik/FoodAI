@@ -44,7 +44,8 @@
     "bakery": "Bakery",
     "meatFish": "Meat & Fish",
     "snacksSweets": "Snacks & Sweets",
-    "spicesSauces": "Spices & Sauces",
+    "spices": "Spices",
+    "sauces": "Sauces",
     "householdDrugstore": "Household & Drugstore",
     "other": "Other"
   },

@@ -299,7 +299,7 @@ app.get("/api/dashboard", (req, res) => {
     threeDaysLater.setDate(threeDaysLater.getDate() + 3);
     const threeDaysLaterStr = threeDaysLater.toISOString().split("T")[0];
 
-    const expiringSoon = db.prepare("SELECT * FROM items WHERE expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC").all(threeDaysLaterStr);
+    const expiringSoon = db.prepare("SELECT * FROM items WHERE expiry_date <= ? AND quantity > 0 AND category != 'Gewürze' ORDER BY expiry_date ASC").all(threeDaysLaterStr);
     const openedItems = db.prepare("SELECT * FROM items WHERE is_open = 1 AND quantity > 0 ORDER BY opened_at DESC").all();
     const todaysRecipes = db.prepare("SELECT * FROM planned_recipes WHERE date = ?").all(today).map((r: any) => ({
       ...r,

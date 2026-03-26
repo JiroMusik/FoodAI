@@ -8,8 +8,10 @@ import { useTranslation } from 'react-i18next';
 export default function Inventory() {
   const { t, i18n } = useTranslation();
 
-  const getExpiryStatus = (date: string | null) => {
+  const getExpiryStatus = (date: string | null, category?: string) => {
     if (!date) return 'ok';
+    // Gewürze werden praktisch nicht schlecht
+    if (category === 'Gewürze') return 'ok';
     const expiry = new Date(date);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -37,7 +39,8 @@ export default function Inventory() {
     'bakery': t('categories.bakery'),
     'meatFish': t('categories.meatFish'),
     'snacksSweets': t('categories.snacksSweets'),
-    'spicesSauces': t('categories.spicesSauces'),
+    'spices': t('categories.spices'),
+    'sauces': t('categories.sauces'),
     'householdDrugstore': t('categories.householdDrugstore'),
     'other': t('categories.other'),
   };
@@ -233,8 +236,8 @@ export default function Inventory() {
   const sortedCategories = Object.keys(groupedByCategory).sort((a, b) => {
     const aItems = Object.values(groupedByCategory[a]).flat();
     const bItems = Object.values(groupedByCategory[b]).flat();
-    const aHasWarning = aItems.some(i => getExpiryStatus(i.expiry_date) !== 'ok');
-    const bHasWarning = bItems.some(i => getExpiryStatus(i.expiry_date) !== 'ok');
+    const aHasWarning = aItems.some(i => getExpiryStatus(i.expiry_date, i.category) !== 'ok');
+    const bHasWarning = bItems.some(i => getExpiryStatus(i.expiry_date, i.category) !== 'ok');
     if (aHasWarning && !bHasWarning) return -1;
     if (!aHasWarning && bHasWarning) return 1;
     return a.localeCompare(b);
@@ -294,7 +297,7 @@ export default function Inventory() {
             'Obst & Gemüse': '🥬', 'Kühlregal': '🧊', 'Tiefkühl': '❄️',
             'Vorratsschrank': '🏪', 'Getränke': '🥤', 'Backwaren': '🍞',
             'Fleisch & Fisch': '🥩', 'Snacks & Süßigkeiten': '🍫',
-            'Gewürze & Saucen': '🧂', 'Haushalt & Drogerie': '🧹', 'Sonstiges': '📦'
+            'Gewürze': '🧂', 'Saucen': '🫙', 'Haushalt & Drogerie': '🧹', 'Sonstiges': '📦'
           };
           const icon = categoryIcons[category] || '📦';
 
@@ -515,10 +518,10 @@ export default function Inventory() {
                                     ) : (
                                       <span className="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-md font-bold shrink-0">{t('common.closed')}</span>
                                     )}
-                                    {getExpiryStatus(item.expiry_date) === 'expired' && (
+                                    {getExpiryStatus(item.expiry_date, item.category) === 'expired' && (
                                       <span className="bg-red-50 text-red-600 text-[10px] px-2 py-0.5 rounded-md font-black shrink-0">{t('common.expired')}</span>
                                     )}
-                                    {getExpiryStatus(item.expiry_date) === 'warning' && (
+                                    {getExpiryStatus(item.expiry_date, item.category) === 'warning' && (
                                       <span className="bg-orange-50 text-orange-600 text-[10px] px-2 py-0.5 rounded-md font-black shrink-0">{t('common.expiringSoon')}</span>
                                     )}
                                   </div>
@@ -530,7 +533,7 @@ export default function Inventory() {
                                       )}
                                     </span>
                                     {item.expiry_date && (
-                                      <span className={`flex items-center gap-1 text-xs ${getExpiryStatus(item.expiry_date) !== 'ok' ? 'text-red-500 font-bold' : ''}`}>
+                                      <span className={`flex items-center gap-1 text-xs ${getExpiryStatus(item.expiry_date, item.category) !== 'ok' ? 'text-red-500 font-bold' : ''}`}>
                                         <Calendar size={12} /> {formatDate(item.expiry_date)}
                                       </span>
                                     )}
