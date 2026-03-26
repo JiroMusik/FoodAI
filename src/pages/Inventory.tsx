@@ -70,8 +70,8 @@ export default function Inventory() {
       if (res.ok) {
         const data = await res.json();
         setItems(data);
-        const categories = Array.from(new Set(data.map((i: any) => i.category))) as string[];
-        setExpandedCategories(categories);
+        // Categories start collapsed
+        setExpandedCategories([]);
       }
     } catch (error) {
       toast.error(t('inventory.errorLoadingInventory'));
@@ -290,15 +290,23 @@ export default function Inventory() {
           const productGroups = groupedByCategory[category];
           const categoryItemCount = Object.values(productGroups).flat().length;
 
+          const categoryIcons: Record<string, string> = {
+            'Obst & Gemüse': '🥬', 'Kühlregal': '🧊', 'Tiefkühl': '❄️',
+            'Vorratsschrank': '🏪', 'Getränke': '🥤', 'Backwaren': '🍞',
+            'Fleisch & Fisch': '🥩', 'Snacks & Süßigkeiten': '🍫',
+            'Gewürze & Saucen': '🧂', 'Haushalt & Drogerie': '🧹', 'Sonstiges': '📦'
+          };
+          const icon = categoryIcons[category] || '📦';
+
           return (
             <div key={category} className="space-y-2">
               <button
                 onClick={() => toggleCategory(category)}
-                className="flex items-center justify-between w-full px-2 py-1 group"
+                className="flex items-center justify-between w-full px-2 py-2 group hover:bg-gray-50 rounded-xl transition-colors"
               >
                 <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center text-gray-500 group-hover:bg-emerald-50 group-hover:text-emerald-600 transition-colors">
-                    <Tag size={16} />
+                  <div className="w-9 h-9 bg-gray-50 rounded-xl flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
+                    {icon}
                   </div>
                   <h2 className="text-sm font-bold text-gray-900 uppercase tracking-widest">{category}</h2>
                   <span className="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-bold">{categoryItemCount}</span>
