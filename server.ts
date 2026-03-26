@@ -61,7 +61,7 @@ const mapCategory = (rawCategory: string, productName: string): string => {
   // Tiefkühl (hat Vorrang vor Fleisch/Fisch)
   if (text.match(/frozen|tiefkühl|tiefgefroren|tk[ -]|ice cream|eis am stiel|pizza.*frozen|iglo|frosta|bofrost|gefrier|golden longs|rösti.*stäbchen/)) return 'Tiefkühl';
   // Kühlregal
-  if (text.match(/dairy|milk|cheese|yogurt|milch|käse|joghurt|butter|cream|sahne|quark|schmand|skyr|frischkäse|aufschnitt|aufstrich|margarine|\bei\b|eier|creme fraiche|mascarpone|ricotta|mozzarella|grana padano|parmesan|kochsahne|vollmilch/)) return 'Kühlregal';
+  if (text.match(/dairy|milk|cheese|yogurt|milch|käse|joghurt|butter|cream|sahne|quark|schmand|skyr|frischkäse|aufschnitt|aufstrich|margarine|\bei\b|eier|creme fraiche|mascarpone|ricotta|mozzarella|grana padano|parmesan|kochsahne|vollmilch|creme fine|creme legere|schmetten|sauerrahm|topfen|hüttenkäse|philadelphia|bresso/)) return 'Kühlregal';
   // Fleisch & Fisch (nach Gewürze — damit "Rinder Bouillon" nicht hier landet)
   if (text.match(/meat|poultry|beef|pork|chicken|fleisch|hähnchen|wurst|würstchen|dörffler|schinken|salami|lachs|thunfisch|garnele|hack\b|rind.*steak|rind.*filet|rind.*roast|schwein|pute|truthahn|shrimp|pangasius|forelle|fish.*filet|fisch.*stäbchen/)) return 'Fleisch & Fisch';
   // Backwaren
