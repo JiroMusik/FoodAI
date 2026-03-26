@@ -24,6 +24,7 @@
     "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.3",
     "better-sqlite3": "^12.4.1",
+    "bring-shopping": "^2.0.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",

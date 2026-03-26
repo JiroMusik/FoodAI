@@ -56,6 +56,28 @@ export default function Dashboard() {
     } catch (e) {}
   };
 
+  const handleImportInspiration = async (url: string) => {
+    try {
+      // Show loading toast since we don't have a loading state specifically for importing here
+      const toastId = toast.loading('Rezept wird importiert...');
+      const res = await fetch('/api/recipes/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      if (!res.ok) throw new Error('Import failed');
+      const recipe = await res.json();
+      
+      // Save it as the current recipe and switch mode, then navigate
+      localStorage.setItem('currentRecipe', JSON.stringify(recipe));
+      localStorage.setItem('recipeMode', 'single');
+      toast.success('Rezept erfolgreich importiert', { id: toastId });
+      navigate('/recipes');
+    } catch (e) {
+      toast.error(t('recipes.importError'));
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-full">
@@ -94,24 +116,35 @@ export default function Dashboard() {
               <div className="text-sm text-gray-400 text-center py-8">{t('common.loading')}</div>
             ) : (
               feedItems.filter(item => item.image).slice(0, 3).map((item, idx) => (
-                <a key={idx} href={item.link} target="_blank" rel="noopener noreferrer"
-                  className="block bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden hover:border-emerald-200 hover:shadow-md transition-all group">
+                <div key={idx} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden hover:border-emerald-200 hover:shadow-md transition-all group flex flex-col">
                   {item.image && (
-                    <div className="h-28 overflow-hidden">
+                    <a href={item.link} target="_blank" rel="noopener noreferrer" className="block h-28 overflow-hidden relative">
                       <img src={item.image} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                    </div>
+                      <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition-colors"></div>
+                    </a>
                   )}
-                  <div className="p-3">
-                    <h3 className="text-sm font-bold text-gray-800 leading-tight line-clamp-2 group-hover:text-emerald-600 transition-colors">{item.title}</h3>
-                    {item.snippet && (
-                      <p className="text-xs text-gray-400 mt-1 line-clamp-2">{item.snippet}</p>
-                    )}
-                    <div className="flex items-center gap-1 mt-2 text-[10px] text-emerald-500 font-bold">
-                      <ExternalLink size={10} />
-                      <span>{t('dashboard.viewRecipe')}</span>
+                  <div className="p-3 flex-1 flex flex-col justify-between">
+                    <div>
+                      <a href={item.link} target="_blank" rel="noopener noreferrer">
+                        <h3 className="text-sm font-bold text-gray-800 leading-tight line-clamp-2 group-hover:text-emerald-600 transition-colors mb-1">{item.title}</h3>
+                      </a>
+                      {item.snippet && (
+                        <p className="text-xs text-gray-400 mt-1 line-clamp-2">{item.snippet}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-50">
+                      <a href={item.link} target="_blank" rel="noopener noreferrer" className="flex-1 flex items-center justify-center gap-1 text-[10px] text-gray-500 font-bold hover:text-gray-700 bg-gray-50 hover:bg-gray-100 py-1.5 rounded-lg transition-colors">
+                        <ExternalLink size={12} /> {t('dashboard.viewRecipe')}
+                      </a>
+                      <button 
+                        onClick={() => handleImportInspiration(item.link)}
+                        className="flex-1 flex items-center justify-center gap-1 text-[10px] text-emerald-600 font-bold hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 py-1.5 rounded-lg transition-colors"
+                      >
+                        Importieren
+                      </button>
                     </div>
                   </div>
-                </a>
+                </div>
               ))
             )}
           </div>
@@ -126,22 +159,29 @@ export default function Dashboard() {
               <h2>{t('dashboard.todayPlanned')}</h2>
             </div>
             {data?.todaysRecipes.length === 0 ? (
-              <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm text-center text-sm text-gray-500">
+              <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center text-sm text-gray-500">
                 {t('dashboard.nothingPlanned')}{' '}
                 <Link to="/calendar" className="text-emerald-600 font-medium">{t('dashboard.toCalendar')}</Link>
               </div>
             ) : (
               <div className="space-y-3">
                 {data?.todaysRecipes.map((recipe) => (
-                  <RecipeCard
-                    key={recipe.id}
-                    recipe={recipe}
-                    onCook={() => navigate('/calendar')}
-                    onBring={() => navigate('/shopping-list')}
-                    compact
-                  />
+                  <div key={recipe.id} onClick={() => navigate('/calendar')} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:border-emerald-200 transition-colors cursor-pointer group">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-gray-900 group-hover:text-emerald-600 transition-colors">{recipe.title}</h3>
+                      {recipe.cooked ? (
+                        <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-md uppercase tracking-widest">{t('calendar.cooked')}</span>
+                      ) : (
+                        <span className="text-[10px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-md uppercase tracking-widest">{t('common.portions')}: {recipe.portions}</span>
+                      )}
+                    </div>
+                    {recipe.description && (
+                      <p className="text-xs text-gray-500 line-clamp-2">{recipe.description}</p>
+                    )}
+                  </div>
                 ))}
               </div>
+            )}
             )}
           </section>
 

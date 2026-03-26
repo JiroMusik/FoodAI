@@ -74,11 +74,11 @@ export default function ShoppingList() {
         </div>
         <button
           onClick={handleAddToBring}
-          disabled={addingToBring || missingItems.length === 0}
+          disabled={addingToBring}
           className="bg-[#E43C31] text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#c93229] transition-colors disabled:opacity-50"
         >
           {addingToBring ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-          {t('shopping.sendToBring')}
+          Auf die Liste
         </button>
       </header>
 

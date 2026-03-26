@@ -192,9 +192,37 @@ export default function Calendar() {
                           </h3>
                           <p className="text-sm text-gray-500 mt-1 line-clamp-2">{recipe.description}</p>
                         </div>
-                        <div className="flex items-center gap-2 ml-4">
+                        <div className="flex items-center gap-2 ml-4 shrink-0">
+                          {editingDateId === recipe.id ? (
+                            <div className="flex items-center gap-1">
+                              <input 
+                                type="date" 
+                                value={editDateValue} 
+                                onChange={(e) => setEditDateValue(e.target.value)}
+                                className="border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold focus:outline-none focus:border-emerald-500"
+                              />
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleUpdateDate(recipe.id); }}
+                                className="p-1.5 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors"
+                              >
+                                <CheckCircle2 size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setEditingDateId(recipe.id); 
+                                setEditDateValue(recipe.date); 
+                              }}
+                              disabled={recipe.cooked}
+                              className="p-2 text-gray-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-xl transition-colors disabled:opacity-50"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                          )}
                           <button
-                            onClick={() => handleDelete(recipe.id)}
+                            onClick={(e) => { e.stopPropagation(); handleDelete(recipe.id); }}
                             className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
                           >
                             <Trash2 size={18} />

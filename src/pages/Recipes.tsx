@@ -153,12 +153,31 @@ export default function Recipes() {
   };
 
   const addToBringFromRecipe = async (targetRecipe: Recipe) => {
-    const missingItems = targetRecipe.ingredients.filter(i => !i.in_inventory).map(i => i.name);
-    if (missingItems.length === 0) {
-      toast.success(t('recipes.allIngredientsAvailable'));
-      return;
+    try {
+      const res = await fetch('/api/recipes/missing-ingredients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          ingredients: targetRecipe.ingredients, 
+          portions: portions,
+          base_portions: targetRecipe.base_portions || portions
+        })
+      });
+      
+      if (!res.ok) throw new Error('Failed to calculate missing items');
+      
+      const data = await res.json();
+      const missingItems = data.missingIngredients.map((i: any) => `${i.name} (${i.amountNeeded} ${i.unit})`);
+      
+      if (missingItems.length === 0) {
+        toast.success(t('recipes.allIngredientsAvailable'));
+        return;
+      }
+      
+      await addToBring(missingItems);
+    } catch (error) {
+      toast.error(t('recipes.errorAddingToBring'));
     }
-    await addToBring(missingItems);
   };
 
   const saveAsFavorite = async (targetRecipe: Recipe) => {

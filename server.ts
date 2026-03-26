@@ -5,6 +5,8 @@ import https from 'https';
 import { createServer as createViteServer } from 'vite';
 import Database from 'better-sqlite3';
 import { GoogleGenAI, Type } from '@google/genai';
+// @ts-ignore
+import Bring from 'bring-shopping';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'path';
@@ -496,6 +498,63 @@ app.get('/api/dashboard', (req, res) => {
   }
 });
 
+app.post('/api/recipes/missing-ingredients', (req, res) => {
+  const { ingredients, portions, base_portions } = req.body;
+  if (!ingredients || !Array.isArray(ingredients)) return res.status(400).json({ error: 'Ingredients required' });
+  
+  try {
+    const required: Record<string, { amount: number, unit: string, name: string }> = {};
+    const ratio = (portions || 2) / (base_portions || 2);
+    
+    ingredients.forEach((ing: any) => {
+      const smallest = convertToSmallestUnit(ing.amount * ratio, ing.unit);
+      const key = `${ing.name.toLowerCase()}_${smallest.unit}`;
+      if (!required[key]) {
+        required[key] = { amount: 0, unit: smallest.unit, name: ing.name };
+      }
+      required[key].amount += smallest.amount;
+    });
+
+    const inventory = db.prepare('SELECT name, quantity, unit FROM items WHERE quantity > 0').all() as any[];
+    const missingIngredients: any[] = [];
+
+    Object.values(required).forEach((reqIng: any) => {
+      const matchingItems = inventory.filter(inv => {
+        const isNameMatch = inv.name.toLowerCase().includes(reqIng.name.toLowerCase()) || 
+                          reqIng.name.toLowerCase().includes(inv.name.toLowerCase());
+        if (!isNameMatch) return false;
+        const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
+        return invSmallest.unit === reqIng.unit;
+      });
+
+      const totalInInventory = matchingItems.reduce((sum, inv) => {
+        const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
+        return sum + invSmallest.amount;
+      }, 0);
+
+      if (totalInInventory < reqIng.amount) {
+        let diff = reqIng.amount - totalInInventory;
+        let displayAmount = diff;
+        let displayUnit = reqIng.unit;
+
+        if (displayUnit === 'g' && displayAmount >= 1000) { displayAmount /= 1000; displayUnit = 'kg'; }
+        else if (displayUnit === 'ml' && displayAmount >= 1000) { displayAmount /= 1000; displayUnit = 'l'; }
+
+        missingIngredients.push({
+          name: reqIng.name,
+          amountNeeded: Math.round(displayAmount * 100) / 100,
+          unit: displayUnit
+        });
+      }
+    });
+
+    res.json({ missingIngredients });
+  } catch (error) {
+    console.error('Missing ingredients error:', error);
+    res.status(500).json({ error: 'Failed to calculate missing ingredients' });
+  }
+});
+
 app.get('/api/shopping-list', (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
@@ -843,6 +902,8 @@ app.post('/api/inventory', (req, res) => {
     const stmt = db.prepare('INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open, location, price, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)');
     const info = stmt.run(name, generic_name || name, quantity, unit, cleanExpiry, category, barcode, pieces_per_pack || 1, quantity, location || 'Vorratsschrank', price || 0, min_stock || 0);
     res.json({ id: info.lastInsertRowid, name, generic_name: generic_name || name, quantity, unit, expiry_date, category, barcode, package_size: quantity, location: location || 'Vorratsschrank', price, min_stock });
+    // Trigger async sync
+    syncToBring().catch(console.error);
   } catch (error) {
     console.error('Inventory add error:', error);
     res.status(500).json({ error: 'Failed to add item' });
@@ -1429,6 +1490,8 @@ app.post('/api/calendar', (req, res) => {
     const stmt = db.prepare('INSERT INTO planned_recipes (date, title, description, ingredients, instructions, portions, base_portions) VALUES (?, ?, ?, ?, ?, ?, ?)');
     stmt.run(date, title, description, JSON.stringify(ingredients), JSON.stringify(instructions), portions, base_portions || portions);
     res.json({ success: true });
+    // Trigger async sync
+    syncToBring().catch(console.error);
   } catch (error) {
     res.status(500).json({ error: 'Failed to add to calendar' });
   }
@@ -1546,6 +1609,8 @@ app.put('/api/calendar/:id/cook', async (req, res) => {
     })();
 
     res.json({ success: true, deducted, missing });
+    // Trigger async sync
+    syncToBring().catch(console.error);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to mark as cooked' });
@@ -1559,6 +1624,18 @@ app.delete('/api/calendar/:id', (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete recipe' });
+  }
+});
+
+app.put('/api/calendar/:id/date', (req, res) => {
+  const { id } = req.params;
+  const { date } = req.body;
+  if (!date) return res.status(400).json({ error: 'Date is required' });
+  try {
+    db.prepare('UPDATE planned_recipes SET date = ? WHERE id = ?').run(date, id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update date' });
   }
 });
 
@@ -1856,7 +1933,7 @@ app.get('/api/settings', (req, res) => {
     const merged = { ...defaults, ...result };
 
     // Mask sensitive values — never return partial values
-    const sensitiveKeys = ['ai_api_key', 'bring_password', 'bring_email'];
+    const sensitiveKeys = ['ai_api_key', 'bring_password'];
     for (const key of sensitiveKeys) {
       if (merged[key]) {
         merged[key + '_set'] = true;
@@ -1875,7 +1952,7 @@ app.post('/api/settings/bulk', (req, res) => {
   if (!settings) return res.status(400).json({ error: 'No settings provided' });
   try {
     const insert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-    const SENSITIVE_KEYS = ['ai_api_key', 'bring_password', 'bring_email'];
+    const SENSITIVE_KEYS = ['ai_api_key', 'bring_password'];
     const transaction = db.transaction((data) => {
       for (const [key, value] of Object.entries(data)) {
         if (value !== undefined && value !== null) {
@@ -1907,25 +1984,129 @@ app.post('/api/settings', (req, res) => {
   }
 });
 
-app.post('/api/bring/add', async (req, res) => {
-  const { items } = req.body;
+// --- Bring! Integration Logic ---
+const getBringClient = () => {
+  const emailRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('bring_email') as any;
+  const passRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('bring_password') as any;
+  if (!emailRow || !passRow) return null;
+  return new Bring({ mail: emailRow.value, password: passRow.value });
+};
+
+// Sync shopping list to Bring! automatically
+const syncToBring = async () => {
+  const bring = getBringClient();
+  if (!bring) return;
+
   try {
-    const emailRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('bring_email') as any;
-    const passRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('bring_password') as any;
-    
-    if (!emailRow || !passRow) {
-      return res.status(400).json({ error: 'Bring! credentials not configured in settings.' });
+    await bring.login();
+    const lists = await bring.loadLists();
+    if (!lists || lists.lists.length === 0) return;
+
+    // Pick the first (default) list
+    const listId = lists.lists[0].listUuid;
+    const bringItems = await bring.getItems(listId);
+
+    // Calculate our current internal shopping list
+    const today = new Date().toISOString().split('T')[0];
+    const upcomingRecipes = db.prepare('SELECT * FROM planned_recipes WHERE date >= ? AND cooked = 0').all(today);
+
+    const required: Record<string, { amount: number, unit: string, name: string }> = {};
+    upcomingRecipes.forEach((recipe: any) => {
+      const ingredients = JSON.parse(recipe.ingredients);
+      const ratio = recipe.portions / recipe.base_portions;
+      ingredients.forEach((ing: any) => {
+        const smallest = convertToSmallestUnit(ing.amount * ratio, ing.unit);
+        const key = `${ing.name.toLowerCase()}_${smallest.unit}`;
+        if (!required[key]) {
+          required[key] = { amount: 0, unit: smallest.unit, name: ing.name };
+        }
+        required[key].amount += smallest.amount;
+      });
+    });
+
+    const inventory = db.prepare('SELECT name, quantity, unit, min_stock FROM items WHERE quantity > 0').all() as any[];
+    const allKnownItems = db.prepare('SELECT name, quantity, unit, min_stock FROM items').all() as any[];
+
+    // Include min_stock requirements
+    const stockLevels: Record<string, { total: number, min: number, unit: string }> = {};
+    allKnownItems.forEach(item => {
+      const key = `${item.name.toLowerCase()}_${normalizeUnit(item.unit)}`;
+      if (!stockLevels[key]) {
+        stockLevels[key] = { total: 0, min: item.min_stock || 0, unit: normalizeUnit(item.unit) };
+      }
+      const smallest = convertToSmallestUnit(item.quantity, item.unit);
+      stockLevels[key].total += smallest.amount;
+    });
+
+    Object.entries(stockLevels).forEach(([key, level]) => {
+      if (level.min > 0 && level.total < level.min) {
+        const name = key.split('_')[0];
+        const missing = level.min - level.total;
+        if (!required[key]) {
+          required[key] = { amount: 0, unit: level.unit, name: name.charAt(0).toUpperCase() + name.slice(1) };
+        }
+        required[key].amount += missing;
+      }
+    });
+
+    const missingNames = new Set<string>();
+
+    Object.values(required).forEach((reqIng: any) => {
+      const matchingItems = inventory.filter(inv => {
+        const isNameMatch = inv.name.toLowerCase().includes(reqIng.name.toLowerCase()) || 
+                          reqIng.name.toLowerCase().includes(inv.name.toLowerCase());
+        if (!isNameMatch) return false;
+        const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
+        return invSmallest.unit === reqIng.unit;
+      });
+
+      const totalInInventory = matchingItems.reduce((sum, inv) => {
+        const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
+        return sum + invSmallest.amount;
+      }, 0);
+
+      if (totalInInventory < reqIng.amount) {
+        // Just use the name for Bring to avoid weird formatting conflicts, but could include amount if desired
+        missingNames.add(reqIng.name.toLowerCase());
+      }
+    });
+
+    // ONE-WAY SYNC LOGIC
+    // 1. Add anything from our missing list that isn't on Bring
+    const bringCurrentNames = new Set(bringItems.purchase.map((i: any) => i.name.toLowerCase()));
+
+    for (const missingName of missingNames) {
+      if (!bringCurrentNames.has(missingName)) {
+        await bring.saveItem(listId, missingName, '');
+      }
     }
 
-    console.log(`Adding ${items.length} items to Bring list`);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    res.json({ success: true, message: `Added ${items.length} items to Bring!` });
+    // 2. Remove anything from Bring that was on our missing list previously, but is no longer missing 
+    // (We only want to remove items that FoodAI "knows" about to avoid deleting manual Bring additions)
+    const allInternalIngredients = new Set(allKnownItems.map(i => i.name.toLowerCase()));
+
+    for (const bringItem of bringItems.purchase) {
+      const bringName = bringItem.name.toLowerCase();
+      // If it's a known ingredient in FoodAI, BUT it's no longer on the missing list -> we bought it! Remove from Bring.
+      if (allInternalIngredients.has(bringName) && !missingNames.has(bringName)) {
+        await bring.removeItem(listId, bringItem.name);
+      }
+    }
+
   } catch (error) {
-    console.error('Bring API error:', error);
-    res.status(500).json({ error: 'Failed to add to Bring list' });
+    console.error('Bring sync error:', error);
+  }
+};
+
+app.post('/api/bring/add', async (req, res) => {
+  try {
+    // We just trigger the full sync now since it handles diffs automatically
+    await syncToBring();
+    res.json({ success: true, message: 'Bring! list synced successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to sync with Bring list' });
   }
 });
-
 // --- Food Inspiration RSS Feed ---
 const rssParser = new Parser({
   customFields: {
@@ -2160,3 +2341,4 @@ startServer();
 }
 
 startServer();
+();
