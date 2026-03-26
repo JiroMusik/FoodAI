@@ -1669,26 +1669,32 @@ app.post('/api/recipes/import', async (req, res) => {
       aliasLookup[canonical.toLowerCase()] = canonical.toLowerCase();
     }
 
-    const getCanonical = (name: string): string => {
+    const getCanonicals = (name: string): string[] => {
       const n = normalize(name);
-      if (aliasLookup[n]) return aliasLookup[n];
-      // Try matching first word
+      const results = new Set<string>();
+      results.add(n);
+      // Exact alias match
+      if (aliasLookup[n]) results.add(aliasLookup[n]);
+      // First word match
       const firstWord = n.split(' ')[0];
-      if (aliasLookup[firstWord]) return aliasLookup[firstWord];
-      // Try partial match
+      if (aliasLookup[firstWord]) results.add(aliasLookup[firstWord]);
+      // Partial match — check if any alias is contained in the name or vice versa
       for (const [alias, canonical] of Object.entries(aliasLookup)) {
-        if (n.includes(alias) || alias.includes(n)) return canonical;
+        if (alias.length >= 3 && (n.includes(alias) || alias.includes(n))) {
+          results.add(canonical);
+        }
       }
-      return n;
+      return Array.from(results);
     };
 
     if (result.ingredients) {
       for (const ing of result.ingredients) {
-        const ingCanonical = getCanonical(ing.name);
+        const ingCanonicals = getCanonicals(ing.name);
         const match = items.find((item: any) => {
-          const itemCanonical = getCanonical(item.name);
-          const genericCanonical = item.generic_name ? getCanonical(item.generic_name) : '';
-          return itemCanonical === ingCanonical || genericCanonical === ingCanonical;
+          const itemCanonicals = getCanonicals(item.name);
+          const genericCanonicals = item.generic_name ? getCanonicals(item.generic_name) : [];
+          const allItemCanonicals = new Set([...itemCanonicals, ...genericCanonicals]);
+          return ingCanonicals.some(ic => allItemCanonicals.has(ic));
         });
         ing.in_inventory = !!match;
       }
