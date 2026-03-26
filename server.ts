@@ -2042,7 +2042,7 @@ async function startServer() {
   .recipe { margin-bottom: 40px; }
   h1 { font-size: 2.8em; font-weight: 700; margin-bottom: 8px; text-shadow: 0 2px 12px rgba(255,255,255,0.1); }
   .desc { font-size: 1.2em; color: #aaa; margin-bottom: 16px; }
-  .meta { font-size: 1em; color: #10b981; font-weight: 600; margin-bottom: 30px; padding: 8px 16px; background: rgba(16,185,129,0.1); border-radius: 12px; display: inline-block; border: 1px solid rgba(16,185,129,0.2); }
+  .meta { font-size: 1em; color: #d1d5db; font-weight: 600; margin-bottom: 30px; padding: 8px 20px; background: rgba(255,255,255,0.06); border-radius: 12px; display: inline-block; border: 1px solid rgba(255,255,255,0.1); letter-spacing: 0.5px; }
   .columns { display: flex; gap: 40px; }
   .col-ingredients { flex: 0 0 25%; }
   .col-instructions { flex: 1; }
@@ -2055,7 +2055,7 @@ async function startServer() {
   ol li { padding: 12px 0; border-bottom: 1px solid #1a1a1a; font-size: 1.05em; counter-increment: step; display: flex; gap: 12px; }
   ol li::before { content: counter(step); flex-shrink: 0; width: 28px; height: 28px; background: #1a1a1a; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: 700; color: #666; }
   ol { counter-reset: step; }
-  .amount { color: #10b981; font-weight: 700; min-width: 80px; }
+  .amount { color: #e5e7eb; font-weight: 700; min-width: 80px; }
   .ok { color: #10b981; }
   .missing { color: #ef4444; }
 </style></head><body>${recipeHtml}</body></html>`);
