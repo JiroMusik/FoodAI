@@ -28,8 +28,19 @@ export async function getAIResponse(prompt: string, imageBase64?: string, schema
 
   const provider = settingsMap.ai_provider || 'gemini';
   const customApiKey = settingsMap.ai_api_key;
-  const modelName = useAdvisorModel ? (settingsMap.advisor_model || settingsMap.ai_model || 'gemini-3-flash-preview') : (settingsMap.ai_model || 'gemini-3-flash-preview');
   const ollamaUrl = settingsMap.ollama_url || 'http://localhost:11434';
+
+  // Per-provider model defaults (must match original behavior)
+  let modelName = useAdvisorModel
+    ? (settingsMap.advisor_model || settingsMap.ai_model)
+    : settingsMap.ai_model;
+  if (!modelName) {
+    if (provider === 'gemini') modelName = 'gemini-3-flash-preview';
+    else if (provider === 'openai') modelName = 'gpt-4o';
+    else if (provider === 'anthropic') modelName = 'claude-3-5-sonnet-latest';
+  }
+
+  console.log(`AI Request: Provider=${provider}, Model=${modelName || 'default'}`);
 
   try {
     if (provider === 'gemini') {
@@ -108,6 +119,15 @@ export async function getAIResponse(prompt: string, imageBase64?: string, schema
     }
 
     if (provider === 'ollama') {
+      // SSRF validation
+      try {
+        const url = new URL(ollamaUrl);
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Invalid Ollama URL protocol');
+        if (['169.254.', '0.0.0.0'].some(p => url.hostname.startsWith(p))) throw new Error('Invalid Ollama URL');
+      } catch (e: any) {
+        if (e.message.includes('Invalid')) throw e;
+        throw new Error('Invalid Ollama URL');
+      }
       const messages: any[] = [{ role: 'user', content: prompt }];
       if (imageBase64) messages[0].images = [imageBase64.replace(/^data:image\/\w+;base64,/, '')];
       const response = await fetch(`${ollamaUrl}/api/generate`, {

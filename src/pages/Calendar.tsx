@@ -1,223 +1,293 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Calendar as CalendarIcon, CheckCircle2, Loader2, Trash2, Users, Camera, Edit2, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Calendar as CalendarIcon, CheckCircle2, Loader2, Trash2, Users, Camera, Edit2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { PlannedRecipe } from '../types.ts';
 import RecipeCard from '../components/RecipeCard';
 import OpenedItemsModal from '../components/OpenedItemsModal';
-import Navigation from '../components/Navigation';
-import { useCalendar } from '../hooks/useCalendar';
 import { useTranslation } from 'react-i18next';
-import { motion, AnimatePresence } from 'motion/react';
 
 export default function Calendar() {
   const { t, i18n } = useTranslation();
-  const navigate = useNavigate();
-  const {
-    recipes,
-    loading,
-    fetchCalendar,
-    deleteRecipe,
-    updateDate,
-    updatePortions,
-    cookRecipe
-  } = useCalendar();
-
+  const [recipes, setRecipes] = useState<PlannedRecipe[]>([]);
+  const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [showOpenedModal, setShowOpenedModal] = useState(false);
-  const [openedItemsToConfirm, setOpenedItemsToConfirm] = useState<any[]>([]);
+  const [openedItems, setOpenedItems] = useState<any[]>([]);
   const [pendingCookId, setPendingCookId] = useState<number | null>(null);
   const [editingDateId, setEditingDateId] = useState<number | null>(null);
-  const [editDateValue, setEditDateValue] = useState<string>('');
+  const [editDateValue, setEditDateValue] = useState('');
+  const navigate = useNavigate();
+
+  const dateLocale = t('common.dateLocale');
 
   useEffect(() => {
     fetchCalendar();
-  }, [fetchCalendar]);
+  }, []);
 
-  const groupedByDate = useMemo(() => {
-    const groups: Record<string, PlannedRecipe[]> = {};
-    recipes.forEach(r => {
-      if (!groups[r.date]) groups[r.date] = [];
-      groups[r.date].push(r);
-    });
-    return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [recipes]);
-
-  const handleCook = async (recipe: PlannedRecipe) => {
+  const fetchCalendar = async () => {
     try {
-      const res = await fetch('/api/cook/check-opened', {
+      const res = await fetch('/api/calendar');
+      if (res.ok) {
+        const data = await res.json();
+        setRecipes(data);
+      }
+    } catch (error) {
+      toast.error(t('calendar.errorLoadingCalendar'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const performCook = async (id: number, openedUpdates: any[]) => {
+    try {
+      const res = await fetch(`/api/calendar/${id}/cook`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ openedUpdates })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(t('calendar.cookedAndDeducted'));
+        if (data.missing?.length > 0) {
+          toast.error(t('calendar.wasMissing', { items: data.missing.join(', ') }));
+        }
+        fetchCalendar();
+      }
+    } catch (error) {
+      toast.error(t('calendar.errorDeducting'));
+    }
+    setPendingCookId(null);
+  };
+
+  const handleCook = async (id: number) => {
+    // Check for opened items
+    try {
+      const checkRes = await fetch('/api/cook/check-opened', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ingredients: recipe.ingredients })
+        body: JSON.stringify({ recipeId: id })
       });
-      const data = await res.json();
-      if (data.openedItems?.length > 0) {
-        setOpenedItemsToConfirm(data.openedItems);
-        setPendingCookId(recipe.id);
-        setShowOpenedModal(true);
-      } else {
-        await cookRecipe(recipe.id, []);
+
+      if (checkRes.ok) {
+        const checkData = await checkRes.json();
+        if (checkData.updates && checkData.updates.length > 0) {
+          const riskyItems = checkData.updates.filter((u: any) => u.needs_new_expiry);
+          if (riskyItems.length > 0) {
+            setOpenedItems(riskyItems);
+            setPendingCookId(id);
+            setShowOpenedModal(true);
+            return;
+          }
+        }
       }
     } catch (e) {
-      await cookRecipe(recipe.id, []);
+      console.error("Failed to check opened items", e);
+    }
+
+    performCook(id, []);
+  };
+
+  const handleConfirmOpened = (updates: any[]) => {
+    setShowOpenedModal(false);
+    if (pendingCookId) {
+      performCook(pendingCookId, updates);
     }
   };
 
   const handleUpdateDate = async (id: number) => {
-    if (!editDateValue) {
-      setEditingDateId(null);
-      return;
+    try {
+      const res = await fetch(`/api/calendar/${id}/date`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: editDateValue })
+      });
+      if (res.ok) {
+        toast.success(t('common.saved'));
+        setEditingDateId(null);
+        fetchCalendar();
+      }
+    } catch (error) {
+      toast.error(t('common.errorSaving'));
     }
-    await updateDate(id, editDateValue);
-    setEditingDateId(null);
   };
 
-  if (loading && recipes.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen bg-gray-50">
-        <Loader2 className="animate-spin text-emerald-500 mb-4" size={48} />
-        <p className="text-gray-500 font-medium">{t('calendar.loadingCalendar')}</p>
-      </div>
-    );
-  }
+  const handleDelete = async (id: number) => {
+    if (!confirm(t('calendar.confirmRemoveRecipe'))) return;
+    try {
+      const res = await fetch(`/api/calendar/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        toast.success(t('common.removed'));
+        fetchCalendar();
+      }
+    } catch (error) {
+      toast.error(t('common.errorDeleting'));
+    }
+  };
+
+  const updatePortions = async (id: number, portions: number) => {
+    if (portions < 1) return;
+    try {
+      const res = await fetch(`/api/calendar/${id}/portions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portions })
+      });
+      if (res.ok) {
+        setRecipes(recipes.map(r => r.id === id ? { ...r, portions } : r));
+      }
+    } catch (error) {
+      toast.error(t('common.errorUpdating'));
+    }
+  };
+
+  const groupedRecipes = recipes.reduce((acc, recipe) => {
+    if (!acc[recipe.date]) acc[recipe.date] = [];
+    acc[recipe.date].push(recipe);
+    return acc;
+  }, {} as Record<string, PlannedRecipe[]>);
+
+  const sortedDates = Object.keys(groupedRecipes).sort();
 
   return (
-    <div className="p-4 sm:p-8 max-w-4xl mx-auto pb-32">
-      <header className="flex justify-between items-center mb-8 pt-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-3xl font-black tracking-tight text-gray-900">{t('calendar.title')}</h1>
-          <div className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full border border-emerald-100 font-bold text-xs">
-            {recipes.length}
-          </div>
+    <div className="p-4 max-w-3xl mx-auto pb-24">
+      <OpenedItemsModal
+        isOpen={showOpenedModal}
+        items={openedItems}
+        onConfirm={handleConfirmOpened}
+        onCancel={() => {
+          setShowOpenedModal(false);
+          if (pendingCookId) performCook(pendingCookId, []);
+        }}
+      />
+      <header className="mb-8 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <h1 className="text-2xl font-bold tracking-widest text-gray-900">{t('calendar.title')}</h1>
+          <button
+            onClick={() => navigate('/free-cook')}
+            className="bg-emerald-100 text-emerald-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-emerald-200 transition-colors"
+          >
+            <Camera size={16} />
+            {t('calendar.freeCooking')}
+          </button>
         </div>
-        <button
-          onClick={() => navigate('/free-cook')}
-          className="bg-emerald-100 text-emerald-700 px-4 py-2.5 rounded-2xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-200 transition-all active:scale-95"
-        >
-          <Camera size={18} />
-          {t('calendar.freeCook')}
-        </button>
       </header>
 
-      {recipes.length === 0 ? (
-        <div className="text-center py-20 bg-white rounded-[32px] border border-dashed border-gray-200">
-          <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-300">
-            <CalendarIcon size={40} />
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="animate-spin text-emerald-600" size={48} />
+        </div>
+      ) : sortedDates.length === 0 ? (
+        <div className="text-center py-24 bg-white rounded-[40px] border-2 border-dashed border-gray-100">
+          <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-6">
+            <CalendarIcon className="text-gray-200" size={40} />
           </div>
-          <h3 className="text-lg font-bold text-gray-900 mb-1">{t('calendar.emptyTitle')}</h3>
-          <p className="text-gray-500 text-sm max-w-xs mx-auto">{t('calendar.emptySubtitle')}</p>
+          <p className="text-gray-500 font-bold text-lg mb-1">{t('calendar.emptyTitle')}</p>
+          <p className="text-gray-400 text-sm">{t('calendar.emptySubtitle')}</p>
         </div>
       ) : (
         <div className="space-y-8">
-          {groupedByDate.map(([date, dateRecipes]) => (
-            <div key={date} className="space-y-3">
-              <div className="flex items-center gap-3 px-2">
-                <div className="h-px flex-1 bg-gray-100"></div>
-                <h2 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">
-                  {new Date(date).toLocaleDateString(i18n.language === 'de' ? 'de-DE' : 'en-US', { weekday: 'long', day: '2-digit', month: 'long' })}
-                </h2>
-                <div className="h-px flex-1 bg-gray-100"></div>
-              </div>
-
-              <div className="space-y-3">
-                {dateRecipes.map((recipe) => (
-                  <div key={recipe.id} className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                    <div className={`p-5 flex items-center justify-between ${recipe.cooked ? 'bg-emerald-50/30' : ''}`}>
-                      <div className="flex-1 min-w-0" onClick={() => setExpandedId(expandedId === recipe.id ? null : recipe.id)}>
-                        <div className="flex items-center gap-3 mb-1">
-                          <h3 className={`font-bold text-lg truncate ${recipe.cooked ? 'text-emerald-800 line-through opacity-50' : 'text-gray-900'}`}>
+          {sortedDates.map(date => (
+            <div key={date} className="space-y-4">
+              <h2 className="text-lg font-bold text-gray-900 border-b border-gray-200 pb-2">
+                {new Date(date).toLocaleDateString(dateLocale, {
+                  weekday: t('calendar.dateFormat.weekday') as 'long' | 'short' | 'narrow',
+                  year: t('calendar.dateFormat.year') as 'numeric' | '2-digit',
+                  month: t('calendar.dateFormat.month') as 'long' | 'short' | 'narrow' | 'numeric' | '2-digit',
+                  day: t('calendar.dateFormat.day') as 'numeric' | '2-digit'
+                })}
+              </h2>
+              <div className="space-y-4">
+                {groupedRecipes[date].map(recipe => (
+                  <div key={recipe.id} className={`bg-white rounded-3xl shadow-sm border ${recipe.cooked ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-100'} overflow-hidden`}>
+                    <div className="p-5 flex flex-col gap-4">
+                      <div className="flex justify-between items-start">
+                        <div
+                          className="flex-1 cursor-pointer"
+                          onClick={() => setExpandedId(expandedId === recipe.id ? null : recipe.id)}
+                        >
+                          <h3 className={`font-bold text-lg ${recipe.cooked ? 'text-emerald-800 line-through opacity-70' : 'text-gray-900'}`}>
                             {recipe.title}
                           </h3>
-                          {recipe.cooked && (
-                            <span className="bg-emerald-100 text-emerald-700 text-[10px] px-2 py-0.5 rounded-md font-bold uppercase tracking-widest">
-                              {t('calendar.cooked')}
-                            </span>
-                          )}
+                          <p className="text-sm text-gray-500 mt-1 line-clamp-2">{recipe.description}</p>
                         </div>
-                        <div className="flex items-center gap-4 text-xs font-medium text-gray-400">
-                          <div className="flex items-center gap-1">
-                            <Users size={14} />
-                            <span>{recipe.portions} {t('common.portions')}</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {expandedId === recipe.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                            <span>{t('calendar.details')}</span>
-                          </div>
+                        <div className="flex items-center gap-2 ml-4 shrink-0">
+                          {editingDateId === recipe.id ? (
+                            <div className="flex items-center gap-1">
+                              <input 
+                                type="date" 
+                                value={editDateValue} 
+                                onChange={(e) => setEditDateValue(e.target.value)}
+                                className="border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold focus:outline-none focus:border-emerald-500"
+                              />
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleUpdateDate(recipe.id); }}
+                                className="p-1.5 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors"
+                              >
+                                <CheckCircle2 size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setEditingDateId(recipe.id); 
+                                setEditDateValue(recipe.date); 
+                              }}
+                              disabled={recipe.cooked}
+                              className="p-2 text-gray-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-xl transition-colors disabled:opacity-50"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDelete(recipe.id); }}
+                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                          >
+                            <Trash2 size={18} />
+                          </button>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1 shrink-0 ml-4">
-                        {editingDateId === recipe.id ? (
-                          <div className="flex items-center gap-1 animate-in fade-in zoom-in duration-200">
-                            <input 
-                              type="date" 
-                              value={editDateValue} 
-                              onChange={(e) => setEditDateValue(e.target.value)}
-                              className="border border-emerald-200 bg-emerald-50/50 rounded-xl px-3 py-2 text-sm font-bold text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                            />
-                            <button 
-                              onClick={() => handleUpdateDate(recipe.id)}
-                              className="p-2 text-white bg-emerald-500 hover:bg-emerald-600 rounded-xl shadow-md transition-all active:scale-95"
-                            >
-                              <CheckCircle2 size={18} />
-                            </button>
-                            <button 
-                              onClick={() => setEditingDateId(null)}
-                              className="p-2 text-gray-400 hover:bg-gray-100 rounded-xl transition-all"
-                            >
-                              <X size={18} />
-                            </button>
-                          </div>
-                        ) : !recipe.cooked && (
-                          <>
-                            <button
-                              onClick={() => handleCook(recipe)}
-                              className="p-3 text-emerald-500 hover:bg-emerald-50 rounded-2xl transition-all active:scale-90"
-                              title={t('calendar.markCooked')}
-                            >
-                              <CheckCircle2 size={24} />
-                            </button>
-                            <button
-                              onClick={() => { setEditingDateId(recipe.id); setEditDateValue(recipe.date); }}
-                              className="p-3 text-gray-400 hover:text-emerald-500 hover:bg-gray-50 rounded-2xl transition-all active:scale-90"
-                            >
-                              <Edit2 size={20} />
-                            </button>
-                          </>
+                      <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+                        <div className="flex items-center gap-2 bg-gray-50 rounded-xl p-1">
+                          <Users size={16} className="text-gray-400 ml-2" />
+                          <input
+                            type="number"
+                            min="1"
+                            value={recipe.portions}
+                            onChange={(e) => updatePortions(recipe.id, parseInt(e.target.value) || 1)}
+                            disabled={recipe.cooked}
+                            className="w-12 bg-transparent text-center font-bold text-gray-700 outline-none"
+                          />
+                        </div>
+
+                        {!recipe.cooked ? (
+                          <button
+                            onClick={() => handleCook(recipe.id)}
+                            className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"
+                          >
+                            <CheckCircle2 size={18} />
+                            <span>{t('calendar.cookAndDeduct')}</span>
+                          </button>
+                        ) : (
+                          <span className="text-emerald-600 font-bold flex items-center gap-1 px-4 py-2">
+                            <CheckCircle2 size={18} /> {t('calendar.cooked')}
+                          </span>
                         )}
-                        <button
-                          onClick={() => deleteRecipe(recipe.id)}
-                          className="p-3 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all active:scale-90"
-                        >
-                          <Trash2 size={20} />
-                        </button>
                       </div>
                     </div>
 
-                    <AnimatePresence>
-                      {expandedId === recipe.id && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="border-t border-gray-50 bg-gray-50/30 p-6"
-                        >
-                          <RecipeCard 
-                            recipe={recipe} 
-                            onCook={() => handleCook(recipe)}
-                            onBring={() => {
-                              const missingItems = recipe.ingredients.map((i: any) => `${i.name} (${i.amount} ${i.unit})`);
-                              fetch('/api/bring/add', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ items: missingItems })
-                              }).then(() => toast.success(t('shopping.addedToBringList')));
-                            }}
-                            compact
-                          />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                    {expandedId === recipe.id && (
+                      <div className="p-5 border-t border-gray-100 bg-gray-50/50">
+                        <RecipeCard
+                          recipe={recipe}
+                          onCook={() => {}}
+                          onBring={() => {}}
+                          compact
+                        />
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -225,23 +295,6 @@ export default function Calendar() {
           ))}
         </div>
       )}
-
-      <AnimatePresence>
-        {showOpenedModal && (
-          <OpenedItemsModal
-            isOpen={showOpenedModal}
-            items={openedItemsToConfirm}
-            onCancel={() => { setShowOpenedModal(false); setPendingCookId(null); }}
-            onConfirm={(updates) => {
-              if (pendingCookId) cookRecipe(pendingCookId, updates);
-              setShowOpenedModal(false);
-              setPendingCookId(null);
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-      <Navigation />
     </div>
   );
 }
