@@ -129,26 +129,36 @@ export const runMigrations = (db: Database) => {
       stmtLookup.run(u.new, u.old);
     }
 
-    // Split "Gewürze & Saucen" into separate categories
-    const saucePattern = /sauce|ketchup|mayo|remoulade|senf|dressing|marinade|brühe|bouillon|fond|soja|worcester|tabasco|sriracha|pesto|saucenbinder|crema|aceto|balsamico/i;
-    const oldCatItems = db.prepare("SELECT id, name FROM items WHERE category = 'Gewürze & Saucen'").all() as any[];
-    const updateCat = db.prepare('UPDATE items SET category = ? WHERE id = ?');
-    for (const item of oldCatItems) {
-      if (saucePattern.test(item.name)) {
-        updateCat.run('Saucen', item.id);
-      } else {
-        updateCat.run('Gewürze', item.id);
+    // One-time migrations (tracked via settings to not re-run on every start)
+    const migrationDone = (key: string) => !!(db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any);
+    const markMigration = (key: string) => db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, '1')").run(key);
+
+    // Split "Gewürze & Saucen" into separate categories (one-time)
+    if (!migrationDone('migration_split_gewuerze_v1')) {
+      const saucePattern = /sauce|ketchup|mayo|remoulade|senf|dressing|marinade|brühe|bouillon|fond|soja|worcester|tabasco|sriracha|pesto|saucenbinder|crema|aceto|balsamico/i;
+      const oldCatItems = db.prepare("SELECT id, name FROM items WHERE category = 'Gewürze & Saucen'").all() as any[];
+      const updateCat = db.prepare('UPDATE items SET category = ? WHERE id = ?');
+      for (const item of oldCatItems) {
+        if (saucePattern.test(item.name)) {
+          updateCat.run('Saucen', item.id);
+        } else {
+          updateCat.run('Gewürze', item.id);
+        }
       }
+      markMigration('migration_split_gewuerze_v1');
     }
 
-    // Re-categorize all items for better consistency
-    const items = db.prepare('SELECT id, name, category FROM items').all() as any[];
-    const updateItemCat = db.prepare('UPDATE items SET category = ? WHERE id = ?');
-    for (const item of items) {
-      const newCat = mapCategory(item.category || '', item.name);
-      if (newCat !== item.category) {
-        updateItemCat.run(newCat, item.id);
+    // Re-categorize items with old English category names (one-time)
+    if (!migrationDone('migration_recat_v1')) {
+      const items = db.prepare('SELECT id, name, category FROM items').all() as any[];
+      const updateItemCat = db.prepare('UPDATE items SET category = ? WHERE id = ?');
+      for (const item of items) {
+        const newCat = mapCategory(item.category || '', item.name);
+        if (newCat !== item.category) {
+          updateItemCat.run(newCat, item.id);
+        }
       }
+      markMigration('migration_recat_v1');
     }
   })();
 };
