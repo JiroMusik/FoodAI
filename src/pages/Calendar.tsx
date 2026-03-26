@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar as CalendarIcon, CheckCircle2, Loader2, Trash2, Users, Camera, Edit2 } from 'lucide-react';
+import { Calendar as CalendarIcon, CheckCircle2, Loader2, Trash2, Users, Camera, Edit2, Heart } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { PlannedRecipe } from '../types.ts';
@@ -108,6 +108,27 @@ export default function Calendar() {
         fetchCalendar();
       }
     } catch (error) {
+      toast.error(t('common.errorSaving'));
+    }
+  };
+
+  const saveAsFavorite = async (recipe: PlannedRecipe) => {
+    try {
+      const res = await fetch('/api/recipes/favorites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: recipe.title,
+          description: recipe.description,
+          ingredients: recipe.ingredients,
+          instructions: recipe.instructions,
+          portions: recipe.portions
+        })
+      });
+      if (res.ok) {
+        toast.success(t('recipes.savedAsFavorite'));
+      }
+    } catch (e) {
       toast.error(t('common.errorSaving'));
     }
   };
@@ -271,9 +292,13 @@ export default function Calendar() {
                             <span>{t('calendar.cookAndDeduct')}</span>
                           </button>
                         ) : (
-                          <span className="text-emerald-600 font-bold flex items-center gap-1 px-4 py-2">
-                            <CheckCircle2 size={18} /> {t('calendar.cooked')}
-                          </span>
+                          <button
+                            onClick={() => saveAsFavorite(recipe)}
+                            className="bg-rose-50 text-rose-600 px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-rose-100 transition-colors"
+                          >
+                            <Heart size={18} />
+                            <span>{t('recipes.favorite')}</span>
+                          </button>
                         )}
                       </div>
                     </div>
