@@ -99,6 +99,7 @@
     "openTooltip": "Öffnen",
     "editTooltip": "Bearbeiten",
     "deleteTooltip": "Löschen",
+    "changeUnit": "Einheit wechseln",
     "errorLoadingInventory": "Fehler beim Laden des Inventars"
   },
   "scanner": {

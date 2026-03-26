@@ -94,6 +94,7 @@
     "openTooltip": "Open",
     "editTooltip": "Edit",
     "deleteTooltip": "Delete",
+    "changeUnit": "Change unit",
     "errorLoadingInventory": "Error loading inventory"
   },
   "scanner": {

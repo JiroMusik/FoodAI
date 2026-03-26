@@ -57,6 +57,7 @@ export default function Inventory() {
   const [editPrice, setEditPrice] = useState<string>('0');
   const [editLocation, setEditLocation] = useState<string>('Vorratsschrank');
   const [editMinStock, setEditMinStock] = useState<string>('0');
+  const [editName, setEditName] = useState<string>('');
   const [openingId, setOpeningId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [isBulkMode, setIsBulkMode] = useState(false);
@@ -90,12 +91,13 @@ export default function Inventory() {
       const res = await fetch(`/api/inventory/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          ...item, 
-          quantity: amount, 
-          unit: editUnit, 
-          expiry_date: editExpiry || null, 
-          package_size: finalPkgSize, 
+        body: JSON.stringify({
+          ...item,
+          name: editName || item.name,
+          quantity: amount,
+          unit: editUnit,
+          expiry_date: editExpiry || null,
+          package_size: finalPkgSize,
           category: editCategory,
           price: parseFloat(editPrice) || 0,
           location: editLocation,
@@ -103,12 +105,13 @@ export default function Inventory() {
         })
       });
       if (res.ok) {
-        setItems(items.map(i => i.id === id ? { 
-          ...i, 
-          quantity: amount, 
-          unit: editUnit, 
-          expiry_date: editExpiry || null, 
-          package_size: finalPkgSize, 
+        setItems(items.map(i => i.id === id ? {
+          ...i,
+          name: editName || item.name,
+          quantity: amount,
+          unit: editUnit,
+          expiry_date: editExpiry || null,
+          package_size: finalPkgSize,
           category: editCategory,
           price: parseFloat(editPrice) || 0,
           location: editLocation,
@@ -374,14 +377,31 @@ export default function Inventory() {
                                   </div>
                                 )}
 
+                                {/* Name field — always visible */}
+                                <div>
+                                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Name</label>
+                                  <input type="text" value={editName} onChange={e => setEditName(e.target.value)}
+                                    className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-800 focus:ring-2 focus:ring-emerald-500 outline-none" />
+                                </div>
+
+                                {/* Quantity + Unit */}
                                 {editUnit === '%' ? (
-                                  <div className="flex flex-wrap gap-2">
-                                    {[100, 75, 50, 25, 0].map(pct => (
-                                      <button key={pct} onClick={() => { setEditAmount(pct.toString()); handleSetQuantity(item.id, pct); }}
-                                        className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${item.quantity === pct ? 'bg-emerald-600 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>
-                                        {pct === 0 ? t('common.empty') : `${pct}%`}
-                                      </button>
-                                    ))}
+                                  <div className="space-y-3">
+                                    <div className="flex flex-wrap gap-2">
+                                      {[100, 75, 50, 25, 0].map(pct => (
+                                        <button key={pct} onClick={() => setEditAmount(pct.toString())}
+                                          className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${parseFloat(editAmount) === pct ? 'bg-emerald-600 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>
+                                          {pct === 0 ? t('common.empty') : `${pct}%`}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <select value={editUnit} onChange={(e) => setEditUnit(e.target.value)}
+                                        className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-600">
+                                        {[t('units.piece'), 'g', 'kg', 'ml', 'l', '%'].map(u => <option key={u} value={u}>{u}</option>)}
+                                      </select>
+                                      <span className="text-xs text-gray-400">{t('inventory.changeUnit')}</span>
+                                    </div>
                                   </div>
                                 ) : (
                                   <>
@@ -395,6 +415,10 @@ export default function Inventory() {
                                     </div>
 
                                     {/* Quick buttons based on unit */}
+                                  </>
+                                )}
+
+                                {/* Shared fields — always visible */}
                                     <div className="grid grid-cols-2 gap-3">
                                 <div className="group">
                                   <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Lagerort</label>
@@ -471,8 +495,6 @@ export default function Inventory() {
                                       <button onClick={() => handleSaveEdit(item.id)} className="flex-1 bg-emerald-600 text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-2"><Check size={16} /> {t('common.save')}</button>
                                       <button onClick={() => deleteItem(item.id)} className="px-4 bg-red-50 text-red-600 rounded-xl flex items-center justify-center"><Trash2 size={18} /></button>
                                     </div>
-                                  </>
-                                )}
                               </div>
                             ) : (
                               /* Display mode */
@@ -520,9 +542,10 @@ export default function Inventory() {
                                       <span className="text-[9px] font-bold">{t('inventory.openTooltip')}</span>
                                     </button>
                                   )}
-                                  <button onClick={() => { 
-                                    setEditingId(item.id); 
-                                    setEditAmount(item.quantity.toString()); 
+                                  <button onClick={() => {
+                                    setEditingId(item.id);
+                                    setEditName(item.name);
+                                    setEditAmount(item.quantity.toString());
                                     setEditUnit(item.unit);
                                     setEditExpiry(item.expiry_date || '');
                                     setEditPackageSize(item.package_size?.toString() || item.quantity.toString());
