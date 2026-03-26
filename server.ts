@@ -1678,9 +1678,9 @@ app.post('/api/recipes/import', async (req, res) => {
       // First word match
       const firstWord = n.split(' ')[0];
       if (aliasLookup[firstWord]) results.add(aliasLookup[firstWord]);
-      // Partial match — check if any alias is contained in the name or vice versa
+      // Partial match — only if alias is a meaningful substring of the name (not vice versa)
       for (const [alias, canonical] of Object.entries(aliasLookup)) {
-        if (alias.length >= 3 && (n.includes(alias) || alias.includes(n))) {
+        if (alias.length >= 4 && n.includes(alias)) {
           results.add(canonical);
         }
       }
