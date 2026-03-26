@@ -91,6 +91,8 @@ export const runMigrations = (db: Database) => {
   addColumn('product_lookup', 'location', 'TEXT');
   addColumn('product_lookup', 'price', 'REAL');
   addColumn('product_lookup', 'min_stock', 'REAL');
+  addColumn('planned_recipes', 'image_url', 'TEXT');
+  addColumn('favorite_recipes', 'image_url', 'TEXT');
 
   // Value Migrations
   db.transaction(() => {

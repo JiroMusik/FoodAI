@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { Save, Cpu, Key, Globe, Languages, Palette, Upload, Sun, Moon, Monitor } from 'lucide-react';
+import { Save, Cpu, Key, Globe, Languages, Palette, Upload, Sun, Moon, Monitor, ImagePlus } from 'lucide-react';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -13,6 +13,12 @@ const INITIAL_PROVIDERS = [
   { id: 'ollama', name: 'Ollama (Local)', models: ['llama3', 'mistral', 'llava'] },
 ];
 
+const IMAGE_PROVIDERS = [
+  { id: 'openai', name: 'OpenAI (DALL-E)', defaultModel: 'dall-e-3' },
+  { id: 'gemini', name: 'Gemini Imagen', defaultModel: 'gemini-2.0-flash-preview-image-generation' },
+  { id: 'stability', name: 'Stability AI', defaultModel: 'sd3.5-large' },
+];
+
 export default function Settings() {
   const { t, i18n } = useTranslation();
   const [providers, setProviders] = useState(INITIAL_PROVIDERS);
@@ -23,7 +29,10 @@ export default function Settings() {
     ai_model: 'gemini-3-flash-preview',
     advisor_model: 'gemini-3-flash-preview',
     ai_api_key: '',
-    ollama_url: 'http://localhost:11434'
+    ollama_url: 'http://localhost:11434',
+    image_provider: 'openai',
+    image_model: '',
+    image_api_key: ''
   });
   const [loading, setLoading] = useState(true);
   const [theme, setTheme] = useState(() => localStorage.getItem('foodai-theme') || 'light');
@@ -140,6 +149,7 @@ export default function Settings() {
   if (loading) return null;
 
   const currentProvider = providers.find(p => p.id === settings.ai_provider);
+  const currentImageProvider = IMAGE_PROVIDERS.find(p => p.id === settings.image_provider);
 
   return (
     <div className="p-4 max-w-3xl mx-auto pb-24">
@@ -320,6 +330,69 @@ export default function Settings() {
                 />
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Image Generation */}
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
+          <h2 className="text-lg font-semibold mb-6 flex items-center">
+            <span className="bg-amber-100 text-amber-600 p-2 rounded-lg mr-3">
+              <ImagePlus size={20} />
+            </span>
+            {t('settings.imageGeneration') || 'Bildgenerierung'}
+          </h2>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {t('settings.imageProvider') || 'Anbieter'}
+              </label>
+              <select
+                value={settings.image_provider}
+                onChange={e => {
+                  const imgProvider = IMAGE_PROVIDERS.find(p => p.id === e.target.value);
+                  setSettings({
+                    ...settings,
+                    image_provider: e.target.value,
+                    image_model: ''
+                  });
+                }}
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+              >
+                {IMAGE_PROVIDERS.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {t('settings.imageModel') || 'Modell'}
+              </label>
+              <input
+                type="text"
+                value={settings.image_model}
+                onChange={e => setSettings({...settings, image_model: e.target.value})}
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
+                placeholder={currentImageProvider?.defaultModel || 'dall-e-3'}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                {t('settings.imageModelHint') || 'Leer lassen für Standardmodell'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                <Key size={14} className="mr-1" /> {t('settings.imageApiKey') || 'API-Schlüssel'}
+              </label>
+              <input
+                type="password"
+                value={settings.image_api_key}
+                onChange={e => setSettings({...settings, image_api_key: e.target.value})}
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
+                placeholder={`API Key für ${currentImageProvider?.name || 'OpenAI (DALL-E)'}`}
+              />
+            </div>
           </div>
         </div>
 

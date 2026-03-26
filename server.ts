@@ -45,7 +45,7 @@ function isAllowedUrl(url: string): boolean {
 }
 
 // --- Settings key allowlist ---
-const ALLOWED_SETTINGS = ['ai_provider', 'ai_model', 'ai_api_key', 'ollama_url', 'bring_email', 'bring_password', 'advisor_model', 'language'];
+const ALLOWED_SETTINGS = ['ai_provider', 'ai_model', 'ai_api_key', 'ollama_url', 'bring_email', 'bring_password', 'advisor_model', 'language', 'image_provider', 'image_model', 'image_api_key'];
 
 // --- Ingredient Matching (alias map + fuzzy matching) ---
 const normalizeIngredient = (s: string) => s.toLowerCase().replace(/\(.*?\)/g, '').replace(/[,\.]/g, '').replace(/\s+/g, ' ').trim();
@@ -1261,9 +1261,13 @@ app.post('/api/calendar', (req, res) => {
   const { date, title, description, ingredients, instructions, portions, base_portions } = req.body;
   try {
     const stmt = db.prepare('INSERT INTO planned_recipes (date, title, description, ingredients, instructions, portions, base_portions) VALUES (?, ?, ?, ?, ?, ?, ?)');
-    stmt.run(date, title, description, JSON.stringify(ingredients), JSON.stringify(instructions), portions, base_portions || portions);
-    res.json({ success: true });
-    // Trigger async sync
+    const result = stmt.run(date, title, description, JSON.stringify(ingredients), JSON.stringify(instructions), portions, base_portions || portions);
+    const recipeId = result.lastInsertRowid;
+    res.json({ success: true, id: recipeId });
+    // Async: generate image + Bring sync
+    generateRecipeImage(title, description).then(url => {
+      if (url) db.prepare('UPDATE planned_recipes SET image_url = ? WHERE id = ?').run(url, recipeId);
+    }).catch(e => console.error('Auto image gen failed:', e.message));
     syncToBring().catch(console.error);
   } catch (error) {
     res.status(500).json({ error: 'Failed to add to calendar' });
@@ -1612,6 +1616,85 @@ app.delete('/api/recipes/favorites/:id', (req, res) => {
   }
 });
 
+// --- Image Generation ---
+async function generateRecipeImage(title: string, description?: string): Promise<string | null> {
+  const provider = (db.prepare('SELECT value FROM settings WHERE key = ?').get('image_provider') as any)?.value || 'openai';
+  const model = (db.prepare('SELECT value FROM settings WHERE key = ?').get('image_model') as any)?.value;
+  const apiKey = (db.prepare('SELECT value FROM settings WHERE key = ?').get('image_api_key') as any)?.value;
+
+  if (!apiKey) return null;
+
+  const prompt = `Professional food photography of "${title}". ${description || ''}. Beautifully plated, appetizing, warm lighting, shallow depth of field, top-down or 45-degree angle, restaurant quality presentation on a clean plate. No text, no watermarks.`;
+
+  console.log(`Image generation: Provider=${provider}, Model=${model || 'default'}`);
+
+  if (provider === 'openai') {
+    const OpenAI = (await import('openai')).default;
+    const client = new OpenAI({ apiKey });
+    const response = await client.images.generate({
+      model: model || 'dall-e-3',
+      prompt, n: 1, size: '1024x1024', quality: 'standard'
+    });
+    return response.data[0]?.url || null;
+  }
+
+  if (provider === 'gemini') {
+    const { GoogleGenAI } = await import('@google/genai');
+    const genAI = new GoogleGenAI({ apiKey });
+    const response = await genAI.models.generateContent({
+      model: model || 'gemini-2.0-flash-preview-image-generation',
+      contents: prompt,
+      config: { responseModalities: ['IMAGE', 'TEXT'] }
+    });
+    const parts = response.candidates?.[0]?.content?.parts || [];
+    const imagePart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+    if (imagePart?.inlineData) {
+      return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+    }
+    return null;
+  }
+
+  if (provider === 'stability') {
+    const fd = new FormData();
+    fd.append('prompt', prompt);
+    fd.append('model', model || 'sd3.5-large');
+    fd.append('output_format', 'png');
+    const response = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
+      body: fd
+    });
+    const data = await response.json();
+    if (data.image) return `data:image/png;base64,${data.image}`;
+    return null;
+  }
+
+  return null;
+}
+
+app.post('/api/recipes/generate-image', async (req, res) => {
+  const { title, description, recipeId, table } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title required' });
+
+  const ip = req.ip || 'unknown';
+  if (!checkRateLimit(ip, 5)) return res.status(429).json({ error: 'Rate limit exceeded' });
+
+  try {
+    const imageUrl = await generateRecipeImage(title, description);
+    if (!imageUrl) return res.status(500).json({ error: 'No image generated — check image API key in settings' });
+
+    if (recipeId && table) {
+      const tbl = table === 'favorites' ? 'favorite_recipes' : 'planned_recipes';
+      db.prepare(`UPDATE ${tbl} SET image_url = ? WHERE id = ?`).run(imageUrl, recipeId);
+    }
+
+    res.json({ image_url: imageUrl });
+  } catch (error: any) {
+    console.error('Image generation error:', error.message);
+    res.status(500).json({ error: error.message || 'Image generation failed' });
+  }
+});
+
 app.post('/api/recipes/cook', (req, res) => {
   const { usedIngredients } = req.body;
   const deducted: any[] = [];
@@ -1660,7 +1743,7 @@ app.get('/api/settings', (req, res) => {
     const merged = { ...defaults, ...result };
 
     // Mask sensitive values — never return partial values
-    const sensitiveKeys = ['ai_api_key', 'bring_password'];
+    const sensitiveKeys = ['ai_api_key', 'bring_password', 'image_api_key'];
     for (const key of sensitiveKeys) {
       if (merged[key]) {
         merged[key + '_set'] = true;
@@ -1679,7 +1762,7 @@ app.post('/api/settings/bulk', (req, res) => {
   if (!settings) return res.status(400).json({ error: 'No settings provided' });
   try {
     const insert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-    const SENSITIVE_KEYS = ['ai_api_key', 'bring_password'];
+    const SENSITIVE_KEYS = ['ai_api_key', 'bring_password', 'image_api_key'];
     const transaction = db.transaction((data) => {
       for (const [key, value] of Object.entries(data)) {
         if (value !== undefined && value !== null) {
@@ -1838,14 +1921,15 @@ async function startServer() {
               <p class="desc">${escapeHtml(r.description || '')}</p>
               <div class="meta">${escapeHtml(String(r.portions))} Portionen</div>
               <div class="columns">
-                <div class="col">
+                <div class="col col-ingredients">
                   <h2>Zutaten</h2>
                   <ul>${ingredients.map((i: any) => `<li><span class="amount">${escapeHtml(String(i.amount))} ${escapeHtml(i.unit)}</span> ${escapeHtml(i.name)} ${i.in_inventory ? '<span class="ok">&#x2713;</span>' : '<span class="missing">&#x2717;</span>'}</li>`).join('')}</ul>
                 </div>
-                <div class="col">
+                <div class="col col-instructions">
                   <h2>Zubereitung</h2>
                   <ol>${instructions.map((s: string) => `<li>${escapeHtml(s)}</li>`).join('')}</ol>
                 </div>
+                ${r.image_url ? `<div class="col col-image"><h2>Gericht</h2><div class="image-wrap"><img src="${escapeHtml(r.image_url)}" alt="${escapeHtml(r.title)}" /></div></div>` : ''}
               </div>
             </div>`;
         }
@@ -1864,8 +1948,12 @@ async function startServer() {
   h1 { font-size: 2.8em; font-weight: 700; margin-bottom: 8px; text-shadow: 0 2px 12px rgba(255,255,255,0.1); }
   .desc { font-size: 1.2em; color: #aaa; margin-bottom: 16px; }
   .meta { font-size: 1em; color: #10b981; font-weight: 600; margin-bottom: 30px; padding: 8px 16px; background: rgba(16,185,129,0.1); border-radius: 12px; display: inline-block; border: 1px solid rgba(16,185,129,0.2); }
-  .columns { display: flex; gap: 60px; }
-  .col { flex: 1; }
+  .columns { display: flex; gap: 40px; }
+  .col-ingredients { flex: 0 0 25%; }
+  .col-instructions { flex: 1; }
+  .col-image { flex: 0 0 28%; }
+  .image-wrap { border-radius: 16px; overflow: hidden; border: 1px solid #222; }
+  .image-wrap img { width: 100%; height: auto; display: block; }
   h2 { font-size: 1em; text-transform: uppercase; letter-spacing: 3px; color: #888; margin-bottom: 20px; padding-bottom: 8px; border-bottom: 1px solid #333; }
   ul, ol { list-style: none; }
   ul li { padding: 8px 0; border-bottom: 1px solid #1a1a1a; font-size: 1.1em; display: flex; align-items: center; gap: 8px; }
