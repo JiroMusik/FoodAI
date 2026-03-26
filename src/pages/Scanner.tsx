@@ -33,6 +33,10 @@ export default function Scanner() {
 
     const startScanner = async () => {
       try {
+        // Clean up leftover DOM from previous scanner instance
+        const el = document.getElementById(scannerElementId);
+        if (el) { while (el.firstChild) el.removeChild(el.firstChild); }
+
         scanner = new Html5Qrcode(scannerElementId);
         html5ScannerRef.current = scanner;
 
@@ -80,8 +84,9 @@ export default function Scanner() {
 
     return () => {
       clearTimeout(timer);
-      if (scanner && scanner.isScanning) {
-        scanner.stop().catch(() => {});
+      if (scanner) {
+        try { if (scanner.isScanning) scanner.stop().catch(() => {}); } catch {}
+        try { scanner.clear(); } catch {}
       }
       html5ScannerRef.current = null;
     };
@@ -264,15 +269,23 @@ export default function Scanner() {
   };
 
   const retake = () => {
+    // Stop any running scanner first
+    const scanner = html5ScannerRef.current;
+    if (scanner) {
+      try { if (scanner.isScanning) scanner.stop().catch(() => {}); } catch {}
+      try { scanner.clear(); } catch {}
+      html5ScannerRef.current = null;
+    }
     setImage(null);
     setResult(null);
     setExistingItem(null);
     setLastDetectedBarcode(null);
-    setIsScanning(true);
     setIsScanningMhd(false);
     setIsPhotoMode(false);
     setSaved(false);
     isProcessingRef.current = false;
+    // Set isScanning last to trigger useEffect with clean state
+    setIsScanning(true);
   };
 
   return (
@@ -530,15 +543,13 @@ export default function Scanner() {
                   <div className="group">
                     <div className="flex items-center justify-between mb-2">
                       <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest group-focus-within:text-emerald-500 transition-colors">{t('scanner.shelfLife')}</label>
-                      {!result.expiry_date && (
-                        <button
-                          onClick={() => setIsScanningMhd(true)}
-                          className="flex items-center space-x-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg hover:bg-emerald-100 transition-colors"
-                        >
-                          <ScanText size={14} />
-                          <span>{t('scanner.scanMhd')}</span>
-                        </button>
-                      )}
+                      <button
+                        onClick={() => setIsScanningMhd(true)}
+                        className="flex items-center space-x-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg hover:bg-emerald-100 transition-colors"
+                      >
+                        <ScanText size={14} />
+                        <span>{t('scanner.scanMhd')}</span>
+                      </button>
                     </div>
                     <input
                       type="date"
