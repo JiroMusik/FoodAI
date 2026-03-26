@@ -288,14 +288,13 @@ app.post('/api/recipes/missing-ingredients', (req, res) => {
       required[key].amount += smallest.amount;
     });
 
-    const inventory = db.prepare('SELECT name, quantity, unit FROM items WHERE quantity > 0').all() as any[];
+    const inventory = db.prepare('SELECT name, generic_name, quantity, unit FROM items WHERE quantity > 0').all() as any[];
     const missingIngredients: any[] = [];
 
     Object.values(required).forEach((reqIng: any) => {
+      // Use canonical alias matching (same as recipe ingredient checking)
       const matchingItems = inventory.filter(inv => {
-        const isNameMatch = inv.name.toLowerCase().includes(reqIng.name.toLowerCase()) || 
-                          reqIng.name.toLowerCase().includes(inv.name.toLowerCase());
-        if (!isNameMatch) return false;
+        if (!isIngredientInInventory(reqIng.name, [inv])) return false;
         const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
         return invSmallest.unit === reqIng.unit;
       });
@@ -348,10 +347,10 @@ app.get('/api/shopping-list', (req, res) => {
       });
     });
 
-    const inventory = db.prepare('SELECT name, quantity, unit, min_stock FROM items WHERE quantity > 0').all() as any[];
-    
+    const inventory = db.prepare('SELECT name, generic_name, quantity, unit, min_stock FROM items WHERE quantity > 0').all() as any[];
+
     // Add items that are below minimum stock
-    const allKnownItems = db.prepare('SELECT name, quantity, unit, min_stock FROM items').all() as any[];
+    const allKnownItems = db.prepare('SELECT name, generic_name, quantity, unit, min_stock FROM items').all() as any[];
     const lowStockItems: Record<string, { amount: number, unit: string, name: string }> = {};
     
     // Group by name and unit for min_stock check
@@ -379,10 +378,9 @@ app.get('/api/shopping-list', (req, res) => {
     const missingIngredients: any[] = [];
 
     Object.values(required).forEach((reqIng: any) => {
+      // Use canonical alias matching (same as recipe ingredient checking)
       const matchingItems = inventory.filter(inv => {
-        const isNameMatch = inv.name.toLowerCase().includes(reqIng.name.toLowerCase()) || 
-                          reqIng.name.toLowerCase().includes(inv.name.toLowerCase());
-        if (!isNameMatch) return false;
+        if (!isIngredientInInventory(reqIng.name, [inv])) return false;
         const invSmallest = convertToSmallestUnit(inv.quantity, inv.unit);
         return invSmallest.unit === reqIng.unit;
       });
