@@ -86,7 +86,6 @@ export default function Scanner() {
       clearTimeout(timer);
       if (scanner) {
         try { if (scanner.isScanning) scanner.stop().catch(() => {}); } catch {}
-        try { scanner.clear(); } catch {}
       }
       html5ScannerRef.current = null;
     };
@@ -273,7 +272,6 @@ export default function Scanner() {
     const scanner = html5ScannerRef.current;
     if (scanner) {
       try { if (scanner.isScanning) scanner.stop().catch(() => {}); } catch {}
-      try { scanner.clear(); } catch {}
       html5ScannerRef.current = null;
     }
     setImage(null);
