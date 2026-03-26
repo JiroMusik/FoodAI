@@ -813,36 +813,41 @@ app.post('/api/inventory/:id/open', async (req, res) => {
 
     db.prepare('UPDATE items SET is_open = 1, opened_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
 
-    // AI Logic for expiry
-    const prompt = `
-      The user has opened the following food item:
-      ID: ${item.id}, Name: ${item.name}
-      
-      Does this item spoil quickly after opening (within 2-5 days)?
-      Examples for YES (spoil quickly): "Passierte Tomaten", "Streukäse", "Milch", "Sahne", "Würstchen im Glas", "Mais (Konserve)", "Bohnen".
-      Examples for NO (last long): "Gewürzgurken", "Ketchup", "Senf", "Marmelade", "Reis", "Nudeln", "Mehl", "Essig", "Öl".
-      
-      Return a JSON object:
-      - needs_new_expiry: boolean (true if it spoils quickly)
-      - days_until_spoiled: number (e.g., 3 for passierte Tomaten, null if needs_new_expiry is false)
-    `;
+    // Skip expiry logic for spices (they don't go bad)
+    if (item.category !== 'Gewürze') {
+      const prompt = `The user opened: "${item.name}" (Category: ${item.category}, Unit: ${item.unit}, Current MHD: ${item.expiry_date || 'none'}).
+After opening, how many days until this goes bad? Guidelines:
+- Fresh dairy (milk, cream, yogurt): 3-5 days
+- Canned goods (tomatoes, beans, corn): 2-3 days in fridge
+- Cold cuts, sausages: 3-5 days
+- Sauces (ketchup, mustard, mayo): 30-90 days
+- Jams, honey, vinegar: 60-180 days
+- Dry goods (flour, rice, pasta): no change
+Return JSON: needs_new_expiry (boolean), days_until_spoiled (number or null)`;
 
-    const schema = {
-      type: Type.OBJECT,
-      properties: {
-        needs_new_expiry: { type: Type.BOOLEAN },
-        days_until_spoiled: { type: Type.NUMBER }
-      },
-      required: ["needs_new_expiry"]
-    };
+      const schema = {
+        type: Type.OBJECT,
+        properties: {
+          needs_new_expiry: { type: Type.BOOLEAN },
+          days_until_spoiled: { type: Type.NUMBER }
+        },
+        required: ["needs_new_expiry"]
+      };
 
-    const aiResult = await getAIResponse(prompt, undefined, schema, true);
-
-    if (aiResult.needs_new_expiry && aiResult.days_until_spoiled) {
-      const newExpiry = new Date();
-      newExpiry.setDate(newExpiry.getDate() + aiResult.days_until_spoiled);
-      const expiryDate = newExpiry.toISOString().split('T')[0];
-      db.prepare('UPDATE items SET expiry_date = ? WHERE id = ?').run(expiryDate, id);
+      try {
+        const aiResult = await getAIResponse(prompt, undefined, schema, true);
+        if (aiResult.needs_new_expiry && aiResult.days_until_spoiled) {
+          const newExpiry = new Date();
+          newExpiry.setDate(newExpiry.getDate() + aiResult.days_until_spoiled);
+          const expiryDate = newExpiry.toISOString().split('T')[0];
+          // Only update if new expiry is sooner than existing
+          if (!item.expiry_date || expiryDate < item.expiry_date) {
+            db.prepare('UPDATE items SET expiry_date = ? WHERE id = ?').run(expiryDate, id);
+          }
+        }
+      } catch (e: any) {
+        console.error('AI expiry check failed (non-critical):', e.message);
+      }
     }
 
     const updatedItem = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
@@ -1116,24 +1121,24 @@ app.post('/api/cook/check-opened', async (req, res) => {
       }
     }
 
-    if (itemsToCheck.length === 0) {
+    // Filter out spices (don't expire)
+    const filteredItems = itemsToCheck.filter((i: any) => i.category !== 'Gewürze');
+
+    if (filteredItems.length === 0) {
       return res.json({ updates: [] });
     }
 
-    // Ask AI
-    const prompt = `
-      The user has opened (partially consumed) the following food items:
-      ${itemsToCheck.map(i => `ID: ${i.id}, Name: ${i.name}`).join('\n')}
-      
-      Which of these items spoil quickly after opening (within 2-5 days)?
-      Examples for YES (spoil quickly): "Passierte Tomaten", "Streukäse", "Milch", "Sahne", "Würstchen im Glas", "Mais (Konserve)", "Bohnen".
-      Examples for NO (last long): "Gewürzgurken", "Ketchup", "Senf", "Marmelade", "Reis", "Nudeln", "Mehl", "Essig", "Öl".
-      
-      Return a JSON object with a key "updates" containing an array of objects:
-      - id: The item ID
-      - needs_new_expiry: boolean (true if it spoils quickly)
-      - days_until_spoiled: number (e.g., 3 for passierte Tomaten, null if needs_new_expiry is false)
-    `;
+    const prompt = `The user opened these food items:
+${filteredItems.map((i: any) => `ID: ${i.id}, Name: "${i.name}", Category: ${i.category}, MHD: ${i.expiry_date || 'none'}`).join('\n')}
+
+After opening, how many days until each goes bad? Guidelines:
+- Fresh dairy (milk, cream, yogurt): 3-5 days
+- Canned goods (tomatoes, beans, corn): 2-3 days in fridge
+- Cold cuts, sausages: 3-5 days
+- Sauces (ketchup, mustard, mayo): 30-90 days
+- Jams, honey, vinegar: 60-180 days
+- Dry goods (flour, rice, pasta): no change
+Return JSON with "updates" array: [{id, needs_new_expiry (boolean), days_until_spoiled (number or null)}]`;
     
     const schema = {
       type: Type.OBJECT,
