@@ -13,10 +13,16 @@ const INITIAL_PROVIDERS = [
   { id: 'ollama', name: 'Ollama (Local)', models: ['llama3', 'mistral', 'llava'] },
 ];
 
-const IMAGE_PROVIDERS = [
-  { id: 'openai', name: 'OpenAI (DALL-E)', models: ['dall-e-3', 'dall-e-2'] },
-  { id: 'gemini', name: 'Gemini Imagen', models: ['gemini-2.0-flash-preview-image-generation', 'imagen-3.0-generate-002'] },
-  { id: 'stability', name: 'Stability AI', models: ['sd3.5-large', 'sd3.5-medium', 'sd3-large'] },
+const IMAGE_PROVIDERS: { id: string; name: string; models: { id: string; recommended?: boolean }[] }[] = [
+  { id: 'openai', name: 'OpenAI (GPT Image)', models: [
+    { id: 'gpt-image-1.5', recommended: true }, { id: 'gpt-image-1' }, { id: 'gpt-image-1-mini' }, { id: 'dall-e-3' }
+  ]},
+  { id: 'gemini', name: 'Google Imagen', models: [
+    { id: 'imagen-4.0-generate-001', recommended: true }, { id: 'imagen-4.0-ultra-generate-001' }, { id: 'imagen-4.0-fast-generate-001' }, { id: 'gemini-2.5-flash-image' }
+  ]},
+  { id: 'stability', name: 'Stability AI', models: [
+    { id: 'sd3.5-large', recommended: true }, { id: 'sd3.5-medium' }, { id: 'sd3.5-large-turbo' }, { id: 'ultra' }, { id: 'core' }
+  ]},
 ];
 
 export default function Settings() {
@@ -354,7 +360,7 @@ export default function Settings() {
                   setSettings({
                     ...settings,
                     image_provider: e.target.value,
-                    image_model: imgProvider?.models[0] || ''
+                    image_model: imgProvider?.models[0]?.id || ''
                   });
                 }}
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
@@ -370,12 +376,12 @@ export default function Settings() {
                 {t('settings.imageModel')}
               </label>
               <select
-                value={settings.image_model || currentImageProvider?.models[0] || ''}
+                value={settings.image_model || currentImageProvider?.models[0]?.id || ''}
                 onChange={e => setSettings({...settings, image_model: e.target.value})}
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
               >
                 {currentImageProvider?.models.map(m => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m.id} value={m.id}>{m.id}{m.recommended ? ' ⭐' : ''}</option>
                 ))}
               </select>
               <p className="text-xs text-gray-500 mt-1">

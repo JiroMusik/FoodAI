@@ -27,6 +27,7 @@
     "persons": "Persons:",
     "available": "Available: {{amount}} {{unit}}",
     "date": "Date",
+    "saved": "Saved",
     "errorSaving": "Error saving",
     "errorDeleting": "Error deleting",
     "errorLoading": "Error loading",

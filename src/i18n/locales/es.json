@@ -27,6 +27,7 @@
     "persons": "Personas:",
     "available": "Disponible: {{amount}} {{unit}}",
     "date": "Fecha",
+    "saved": "Guardado",
     "errorSaving": "Error al guardar",
     "errorDeleting": "Error al eliminar",
     "errorLoading": "Error al cargar",

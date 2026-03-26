@@ -1622,25 +1622,36 @@ async function generateRecipeImage(title: string, description?: string): Promise
 
   if (!apiKey) return null;
 
-  const prompt = `Professional food photography of "${title}". ${description || ''}. Beautifully plated, appetizing, warm lighting, shallow depth of field, top-down or 45-degree angle, restaurant quality presentation on a clean plate. No text, no watermarks.`;
+  const prompt = `Professional food photography of "${title}". ${description || ''}. Beautifully plated on a dark slate board, shot from a 45-degree angle. Warm natural side lighting with soft shadows, shallow depth of field, f/2.8 aperture, 85mm lens. Editorial food styling with fresh garnishes and natural textures visible. Warm color palette, appetizing presentation, photorealistic detail. Shot on a high-end DSLR camera, commercial food photography quality. No text, no watermarks, no logos.`;
+  const negativePrompt = 'plastic, fake, illustration, cartoon, painting, CGI, blurry, watermark, text, logo, oversaturated, unrealistic colors, stock photo border';
 
   console.log(`Image generation: Provider=${provider}, Model=${model || 'default'}`);
 
   if (provider === 'openai') {
     const OpenAI = (await import('openai')).default;
     const client = new OpenAI({ apiKey });
-    const response = await client.images.generate({
-      model: model || 'dall-e-3',
-      prompt, n: 1, size: '1024x1024', quality: 'standard'
-    });
-    return response.data[0]?.url || null;
+    const effectiveModel = model || 'gpt-image-1.5';
+    if (effectiveModel.startsWith('gpt-image')) {
+      const response = await client.images.generate({
+        model: effectiveModel,
+        prompt, n: 1, size: '1024x1024', quality: 'medium'
+      });
+      return response.data[0]?.url || (response.data[0] as any)?.b64_json ? `data:image/png;base64,${(response.data[0] as any).b64_json}` : null;
+    } else {
+      const response = await client.images.generate({
+        model: effectiveModel,
+        prompt, n: 1, size: '1024x1024', quality: 'standard'
+      });
+      return response.data[0]?.url || null;
+    }
   }
 
   if (provider === 'gemini') {
     const { GoogleGenAI } = await import('@google/genai');
     const genAI = new GoogleGenAI({ apiKey });
+    const effectiveModel = model || 'imagen-4.0-generate-001';
     const response = await genAI.models.generateContent({
-      model: model || 'gemini-2.0-flash-preview-image-generation',
+      model: effectiveModel,
       contents: prompt,
       config: { responseModalities: ['IMAGE', 'TEXT'] }
     });
@@ -1655,6 +1666,7 @@ async function generateRecipeImage(title: string, description?: string): Promise
   if (provider === 'stability') {
     const fd = new FormData();
     fd.append('prompt', prompt);
+    fd.append('negative_prompt', negativePrompt);
     fd.append('model', model || 'sd3.5-large');
     fd.append('output_format', 'png');
     const response = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
