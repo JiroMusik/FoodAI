@@ -1616,7 +1616,7 @@ app.post('/api/recipes/import', async (req, res) => {
     const lang = (db.prepare("SELECT value FROM settings WHERE key = 'language'").get() as any)?.value || 'de';
     const langName = lang === 'de' ? 'German' : lang === 'es' ? 'Spanish' : 'English';
 
-    const prompt = `Extract a recipe from this webpage content. ${schemaRecipe ? 'JSON-LD Schema found: ' + schemaRecipe : ''}\n\nPage text: ${textContent}\n\nReturn a JSON object with:\n- title: Recipe title (in ${langName})\n- description: Short description (in ${langName})\n- ingredients: Array of { name (${langName}), amount (number), unit (string), in_inventory: false }\n- instructions: Array of step strings (in ${langName})\n\nIf the page is not a recipe, return { "error": "No recipe found" }.`;
+    const prompt = `Extract a recipe from this webpage content. ${schemaRecipe ? 'JSON-LD Schema found: ' + schemaRecipe : ''}\n\nPage text: ${textContent}\n\nReturn a JSON object with:\n- title: Recipe title (in ${langName})\n- description: Short description (in ${langName})\n- ingredients: Array of { name (${langName}, clean name without parentheses like "(n)" or "(s)"), amount (number, MUST be > 0. For vague amounts like "etwas", "nach Geschmack", "n.B." use 1. For "eine Prise" use 1.), unit (string — use "Stück", "g", "kg", "ml", "l", "EL", "TL", "Prise", "Bund"), in_inventory: false }\n- instructions: Array of step strings (in ${langName})\n\nIMPORTANT: Every ingredient MUST have amount > 0 and a clean name. Never return amount 0.\n\nIf the page is not a recipe, return { "error": "No recipe found" }.`;
 
     const schema = {
       type: Type.OBJECT,
@@ -1650,12 +1650,20 @@ app.post('/api/recipes/import', async (req, res) => {
 
     // Check which ingredients are in inventory
     const items = db.prepare('SELECT name, generic_name, quantity, unit FROM items WHERE quantity > 0').all() as any[];
+    const normalize = (s: string) => s.toLowerCase().replace(/\(.*?\)/g, '').replace(/[,\.]/g, '').replace(/\s+/g, ' ').trim();
+    const stemMatch = (a: string, b: string) => {
+      const na = normalize(a), nb = normalize(b);
+      if (na.includes(nb) || nb.includes(na)) return true;
+      // Match base word (first 4+ chars) for plural tolerance: zwiebel/zwiebeln, tomate/tomaten
+      const baseA = na.split(' ')[0].slice(0, Math.max(4, Math.floor(na.split(' ')[0].length * 0.7)));
+      const baseB = nb.split(' ')[0].slice(0, Math.max(4, Math.floor(nb.split(' ')[0].length * 0.7)));
+      return baseA === baseB || na.split(' ')[0].startsWith(baseB) || nb.split(' ')[0].startsWith(baseA);
+    };
     if (result.ingredients) {
       for (const ing of result.ingredients) {
         const match = items.find((item: any) =>
-          item.name.toLowerCase().includes(ing.name.toLowerCase()) ||
-          ing.name.toLowerCase().includes(item.name.toLowerCase()) ||
-          (item.generic_name && item.generic_name.toLowerCase().includes(ing.name.toLowerCase()))
+          stemMatch(item.name, ing.name) ||
+          (item.generic_name && stemMatch(item.generic_name, ing.name))
         );
         ing.in_inventory = !!match;
       }
