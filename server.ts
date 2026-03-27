@@ -1872,16 +1872,41 @@ app.post('/api/recipes/cook', (req, res) => {
             db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
             item.quantity = newQty;
             deducted.push({ ...item, quantity_deducted: pctDeduct });
-          } else if (item.quantity >= ing.amount) {
-            const newQty = item.quantity - ing.amount;
-            db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
-            item.quantity = newQty; // update in-memory for subsequent matches
-            deducted.push({ ...item, quantity_deducted: ing.amount });
           } else {
-            db.prepare('UPDATE items SET quantity = 0 WHERE id = ?').run(item.id);
-            deducted.push({ ...item, quantity_deducted: item.quantity });
-            missing.push(`${ing.name} (Fehlt: ${ing.amount - item.quantity} ${ing.unit || item.unit || ''})`.trim());
-            item.quantity = 0;
+            // Convert both to smallest unit for correct comparison (e.g. 1kg vs 1000g)
+            const reqSmall = convertToSmallestUnit(ing.amount, ing.unit || item.unit);
+            const invSmall = convertToSmallestUnit(item.quantity, item.unit);
+
+            if (reqSmall.unit === invSmall.unit) {
+              // Units compatible — deduct with conversion
+              if (invSmall.amount >= reqSmall.amount) {
+                const remaining = invSmall.amount - reqSmall.amount;
+                // Convert back to original unit
+                const newQty = (remaining / invSmall.amount) * item.quantity;
+                db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
+                item.quantity = newQty;
+                deducted.push({ ...item, quantity_deducted: ing.amount });
+              } else {
+                db.prepare('UPDATE items SET quantity = 0 WHERE id = ?').run(item.id);
+                deducted.push({ ...item, quantity_deducted: item.quantity });
+                const missingSmall = reqSmall.amount - invSmall.amount;
+                missing.push(`${ing.name} (Fehlt: ${Math.round(missingSmall * 100) / 100} ${reqSmall.unit})`.trim());
+                item.quantity = 0;
+              }
+            } else {
+              // Units incompatible (shouldn't happen often) — try raw deduction as fallback
+              if (item.quantity >= ing.amount) {
+                const newQty = item.quantity - ing.amount;
+                db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
+                item.quantity = newQty;
+                deducted.push({ ...item, quantity_deducted: ing.amount });
+              } else {
+                db.prepare('UPDATE items SET quantity = 0 WHERE id = ?').run(item.id);
+                deducted.push({ ...item, quantity_deducted: item.quantity });
+                missing.push(`${ing.name} (Fehlt: ${ing.amount - item.quantity} ${ing.unit || item.unit || ''})`.trim());
+                item.quantity = 0;
+              }
+            }
           }
         } else {
           missing.push(ing.name);

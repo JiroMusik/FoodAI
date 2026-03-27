@@ -13,6 +13,12 @@ export const convertToSmallestUnit = (amount: number, unit: string): { amount: n
   const norm = normalizeUnit(unit);
   if (norm === 'kg') return { amount: amount * 1000, unit: 'g' };
   if (norm === 'l') return { amount: amount * 1000, unit: 'ml' };
+  // Cooking units → approximate g/ml conversion
+  const u = unit.toLowerCase().trim();
+  if (u === 'el' || u === 'esslöffel' || u === 'tbsp') return { amount: amount * 15, unit: 'ml' };
+  if (u === 'tl' || u === 'teelöffel' || u === 'tsp') return { amount: amount * 5, unit: 'ml' };
+  if (u === 'prise' || u === 'pinch') return { amount: amount * 0.5, unit: 'g' };
+  if (u === 'bund' || u === 'bunch') return { amount: amount, unit: 'Stück' };
   return { amount, unit: norm };
 };
 
