@@ -18,7 +18,12 @@ export default function Recipes() {
   const [loading, setLoading] = useState(false);
   const [preferences, setPreferences] = useState(() => localStorage.getItem('recipePreferences') || '');
   const [portions, setPortions] = useState(() => parseInt(localStorage.getItem('recipePortions') || '2'));
-  const [targetDate, setTargetDate] = useState(() => localStorage.getItem('recipeTargetDate') || new Date().toISOString().split('T')[0]);
+  const [targetDate, setTargetDate] = useState(() => {
+    const saved = localStorage.getItem('recipeTargetDate');
+    const today = new Date().toISOString().split('T')[0];
+    // Never use a date in the past
+    return (saved && saved >= today) ? saved : today;
+  });
   const [mode, setMode] = useState<'single' | 'weekly'>(() => (localStorage.getItem('recipeMode') as 'single' | 'weekly') || 'single');
   const [expandedDay, setExpandedDay] = useState<number | null>(null);
   const [cookedResult, setCookedResult] = useState<any>(null);
