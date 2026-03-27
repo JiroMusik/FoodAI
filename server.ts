@@ -6,7 +6,7 @@ import { createServer as createViteServer } from 'vite';
 import { db } from './server/db/database';
 import { runMigrations } from './server/db/migrations';
 import { mapCategory } from './server/utils/categories';
-import { normalizeUnit, convertToSmallestUnit, amountsMatch } from './server/utils/units';
+import { normalizeUnit, convertToSmallestUnit } from './server/utils/units';
 import { getAIResponse, checkRateLimit } from './server/services/ai.service';
 import { syncToBring } from './server/services/bring.service';
 import { SCAN_PROMPT, SCAN_SCHEMA, MHD_PROMPT, MHD_SCHEMA } from './server/services/prompts';
@@ -348,10 +348,14 @@ app.post('/api/recipes/missing-ingredients', (req, res) => {
       required[key].amount += smallest.amount;
     });
 
-    const inventory = db.prepare('SELECT name, generic_name, quantity, unit FROM items WHERE quantity > 0').all() as any[];
+    const inventory = db.prepare('SELECT name, generic_name, quantity, unit, category FROM items WHERE quantity > 0').all() as any[];
     const missingIngredients: any[] = [];
 
     Object.values(required).forEach((reqIng: any) => {
+      // Spices with any stock: always available regardless of unit
+      const spiceMatch = inventory.find(inv => isIngredientInInventory(reqIng.name, [inv]));
+      if (spiceMatch?.category === 'Gewürze' && spiceMatch.quantity > 0) return;
+
       // Use canonical alias matching (same as recipe ingredient checking)
       const matchingItems = inventory.filter(inv => {
         if (!isIngredientInInventory(reqIng.name, [inv])) return false;
@@ -739,11 +743,12 @@ app.get('/api/recipes/weekly', (req, res) => {
 
 app.post('/api/inventory', (req, res) => {
   const { name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, location, price, min_stock } = req.body;
+  const finalCategory = mapCategory(category || '', name);
   try {
     // Save to product_lookup for future barcode scans
     if (barcode) {
       db.prepare('INSERT OR IGNORE INTO product_lookup (barcode, name, generic_name, category, default_quantity, unit, pieces_per_pack, location, price, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(barcode, name, generic_name || name, category, quantity, unit, pieces_per_pack || 1, location, price, min_stock);
+        .run(barcode, name, generic_name || name, finalCategory, quantity, unit, pieces_per_pack || 1, location, price, min_stock);
     }
 
     // Sanitize expiry_date — AI sometimes returns "null" string
@@ -751,8 +756,8 @@ app.post('/api/inventory', (req, res) => {
 
     // Always create a new item — each physical package is its own row
     const stmt = db.prepare('INSERT INTO items (name, generic_name, quantity, unit, expiry_date, category, barcode, pieces_per_pack, package_size, is_open, location, price, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)');
-    const info = stmt.run(name, generic_name || name, quantity, unit, cleanExpiry, category, barcode, pieces_per_pack || 1, quantity, location || 'Vorratsschrank', price || 0, min_stock || 0);
-    res.json({ id: info.lastInsertRowid, name, generic_name: generic_name || name, quantity, unit, expiry_date, category, barcode, package_size: quantity, location: location || 'Vorratsschrank', price, min_stock });
+    const info = stmt.run(name, generic_name || name, quantity, unit, cleanExpiry, finalCategory, barcode, pieces_per_pack || 1, quantity, location || 'Vorratsschrank', price || 0, min_stock || 0);
+    res.json({ id: info.lastInsertRowid, name, generic_name: generic_name || name, quantity, unit, expiry_date, category: finalCategory, barcode, package_size: quantity, location: location || 'Vorratsschrank', price, min_stock });
     // Trigger async sync
     syncToBring().catch(console.error);
   } catch (error) {
@@ -888,7 +893,8 @@ app.post('/api/ha/inventory/update', (req, res) => {
     } else if (barcode) {
       item = db.prepare('SELECT * FROM items WHERE barcode = ?').get(barcode) as any;
     } else if (name) {
-      item = db.prepare("SELECT * FROM items WHERE name LIKE ? ESCAPE '\\'").get(`%${escapeLike(name)}%`) as any;
+      const allItems = db.prepare('SELECT * FROM items').all() as any[];
+      item = allItems.find((inv: any) => isIngredientInInventory(name, [inv]));
     }
 
     if (!item) return res.status(404).json({ error: 'Item not found' });
@@ -938,7 +944,7 @@ app.post('/api/scan', largeBody, async (req, res) => {
   if (!imageBase64) return res.status(400).json({ error: 'No image provided' });
 
   try {
-    const prompt = 'Analyze this image of a food product, barcode, or label. 1. Identify the product name. IMPORTANT: Remove brand names (e.g., "Iglo", "Barilla", "Gut & Günstig") but KEEP the variant/type (e.g., "Rahmspinat", "Lasagne", "Dunkler Saucenbinder", "Hähnchenschnitzel"). Example: "Iglo Rahmspinat Blubb" -> "Rahmspinat". "Knorr Saucenbinder Dunkel" -> "Dunkler Saucenbinder". 2. Determine a generic_name for grouping (e.g., "Rahmspinat (TK)"). IMPORTANT: For spices, seasonings, and spice mixes, the generic_name MUST be the specific spice/mix name (e.g., "Curry gemahlen", "Magic Dust", "Burger Gewürz"). NEVER use generic terms like "Gewürzmischung", "Spice Mix", or "Seasoning" as generic_name. 3. If a barcode is visible, try to decode it. 4. Estimate the CONTENT quantity and unit — always use the actual content unit, never "Packung". A 2L bottle = quantity:2000 unit:"ml". A 500g pack of pasta = quantity:500 unit:"g". A pack of 10 eggs = quantity:10 unit:"Stück". For spices/oils where exact weight is hard to track, use quantity:100 unit:"%". 5. Identify an expiry date if visible (YYYY-MM-DD). ONLY return a date if you are VERY sure. If unsure or not visible, return null. 6. Estimate the price in EUR if visible or common. 7. Suggest a storage location (e.g., Fridge, Freezer, Pantry). Return a JSON object with keys: name (string), generic_name (string), quantity (number), unit (string), category (string), expiry_date (string or null), price (number or null), location (string). The category MUST be one of: "Obst & Gemüse", "Kühlregal", "Tiefkühl", "Vorratsschrank", "Getränke", "Backwaren", "Fleisch & Fisch", "Snacks & Süßigkeiten", "Gewürze & Saucen", "Haushalt & Drogerie", "Sonstiges". The unit MUST be one of: "Stück", "g", "kg", "ml", "l", "%".';
+    const prompt = 'Analyze this image of a food product, barcode, or label. 1. Identify the product name. IMPORTANT: Remove brand names (e.g., "Iglo", "Barilla", "Gut & Günstig") but KEEP the variant/type (e.g., "Rahmspinat", "Lasagne", "Dunkler Saucenbinder", "Hähnchenschnitzel"). Example: "Iglo Rahmspinat Blubb" -> "Rahmspinat". "Knorr Saucenbinder Dunkel" -> "Dunkler Saucenbinder". 2. Determine a generic_name for grouping (e.g., "Rahmspinat (TK)"). IMPORTANT: For spices, seasonings, and spice mixes, the generic_name MUST be the specific spice/mix name (e.g., "Curry gemahlen", "Magic Dust", "Burger Gewürz"). NEVER use generic terms like "Gewürzmischung", "Spice Mix", or "Seasoning" as generic_name. 3. If a barcode is visible, try to decode it. 4. Estimate the CONTENT quantity and unit — always use the actual content unit, never "Packung". A 2L bottle = quantity:2000 unit:"ml". A 500g pack of pasta = quantity:500 unit:"g". A pack of 10 eggs = quantity:10 unit:"Stück". For spices/oils where exact weight is hard to track, use quantity:100 unit:"%". 5. Identify an expiry date if visible (YYYY-MM-DD). ONLY return a date if you are VERY sure. If unsure or not visible, return null. 6. Estimate the price in EUR if visible or common. 7. Suggest a storage location (e.g., Fridge, Freezer, Pantry). Return a JSON object with keys: name (string), generic_name (string), quantity (number), unit (string), category (string), expiry_date (string or null), price (number or null), location (string). The category MUST be one of: "Obst & Gemüse", "Kühlregal", "Tiefkühl", "Vorratsschrank", "Getränke", "Backwaren", "Fleisch & Fisch", "Snacks & Süßigkeiten", "Gewürze", "Saucen", "Haushalt & Drogerie", "Sonstiges". The unit MUST be one of: "Stück", "g", "kg", "ml", "l", "%".';
 
     const schema = {
       type: Type.OBJECT,
@@ -947,7 +953,7 @@ app.post('/api/scan', largeBody, async (req, res) => {
         generic_name: { type: Type.STRING },
         quantity: { type: Type.NUMBER },
         unit: { type: Type.STRING, enum: ["Stück", "g", "kg", "ml", "l", "%"] },
-        category: { type: Type.STRING, enum: ["Obst & Gemüse", "Kühlregal", "Tiefkühl", "Vorratsschrank", "Getränke", "Backwaren", "Fleisch & Fisch", "Snacks & Süßigkeiten", "Gewürze & Saucen", "Haushalt & Drogerie", "Sonstiges"] },
+        category: { type: Type.STRING, enum: ["Obst & Gemüse", "Kühlregal", "Tiefkühl", "Vorratsschrank", "Getränke", "Backwaren", "Fleisch & Fisch", "Snacks & Süßigkeiten", "Gewürze", "Saucen", "Haushalt & Drogerie", "Sonstiges"] },
         expiry_date: { type: Type.STRING, description: "YYYY-MM-DD format or null" },
         price: { type: Type.NUMBER },
         location: { type: Type.STRING }
@@ -1082,7 +1088,16 @@ app.post('/api/cook/check-opened', async (req, res) => {
         // Use canonical alias matching
         const allInv = db.prepare('SELECT * FROM items ORDER BY is_open DESC, expiry_date ASC').all() as any[];
         const rows = allInv.filter(inv => isIngredientInInventory(ing.name, [inv]));
-        
+
+        // Spice: deduct percentage (exact if package_size known, else 0.5%/1%)
+        const spiceItem = rows.find((r: any) => r.category === 'Gewürze' && r.unit === '%' && r.quantity > 0);
+        if (spiceItem && !rows.some(r => convertToSmallestUnit(r.quantity, r.unit).unit === convertToSmallestUnit(remainingToDeduct, ing.unit).unit)) {
+          const pctDeduct = calcSpiceDeduction(spiceItem, deductAmount, ing.unit);
+          const newQty = Math.max(0, spiceItem.quantity - pctDeduct);
+          db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, spiceItem.id);
+          remainingToDeduct = 0;
+        }
+
         for (const item of rows) {
           if (remainingToDeduct <= 0) break;
           
@@ -1408,6 +1423,18 @@ app.put('/api/calendar/:id/cook', async (req, res) => {
           return invSmallest.unit === smallestReq.unit;
         });
 
+        // Spice special handling: deduct percentage (exact if package_size known)
+        if (matchingRows.length === 0) {
+          const spiceItem = rows.find((r: any) => r.category === 'Gewürze' && r.unit === '%' && r.quantity > 0);
+          if (spiceItem) {
+            const pctDeduct = calcSpiceDeduction(spiceItem, reqAmt, ing.unit);
+            const newQty = Math.max(0, spiceItem.quantity - pctDeduct);
+            db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, spiceItem.id);
+            deducted.push({ ...spiceItem, quantity_deducted_smallest: pctDeduct });
+            remainingToDeduct = 0;
+          }
+        }
+
         if (matchingRows.length > 0) {
           for (const item of matchingRows) {
             if (remainingToDeduct <= 0) break;
@@ -1703,6 +1730,21 @@ app.delete('/api/recipes/favorites/:id', (req, res) => {
   }
 });
 
+// --- Spice Deduction Helper ---
+function calcSpiceDeduction(item: any, amount: number, unit: string): number {
+  const vagueUnits = ['prise', 'tl', 'el', 'bund'];
+  const isVague = vagueUnits.includes(unit.toLowerCase());
+  if (isVague) {
+    return (unit.toLowerCase() === 'prise' || unit.toLowerCase() === 'tl') ? 0.5 : 1;
+  }
+  // Exact: calculate % based on package_size (e.g. 3g from 35g jar = 8.6%)
+  if (item.package_size && item.package_size > 0 && (unit === 'g' || unit === 'ml')) {
+    return Math.round((amount / item.package_size) * 100 * 10) / 10; // 1 decimal
+  }
+  // Fallback
+  return amount < 5 ? 0.5 : 1;
+}
+
 // --- Image Generation ---
 async function generateRecipeImage(title: string, description?: string): Promise<string | null> {
   const provider = (db.prepare('SELECT value FROM settings WHERE key = ?').get('image_provider') as any)?.value || 'openai';
@@ -1823,7 +1865,14 @@ app.post('/api/recipes/cook', (req, res) => {
         // Use canonical alias matching (same as recipe ingredient checking)
         const item = allItems.find(inv => isIngredientInInventory(ing.name, [inv]));
         if (item) {
-          if (item.quantity >= ing.amount) {
+          // Spice special case: deduct percentage (exact if package_size known)
+          if (item.category === 'Gewürze' && item.unit === '%') {
+            const pctDeduct = calcSpiceDeduction(item, ing.amount, ing.unit || 'g');
+            const newQty = Math.max(0, item.quantity - pctDeduct);
+            db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
+            item.quantity = newQty;
+            deducted.push({ ...item, quantity_deducted: pctDeduct });
+          } else if (item.quantity >= ing.amount) {
             const newQty = item.quantity - ing.amount;
             db.prepare('UPDATE items SET quantity = ? WHERE id = ?').run(newQty, item.id);
             item.quantity = newQty; // update in-memory for subsequent matches
